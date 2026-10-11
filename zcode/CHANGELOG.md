@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.4] - 2026-10-11
+
+### Fixed
+- 修复桥接授权页丢失 `state` 参数：宿主将 URL path 与 query 分开传递（Path 不含 query、参数在 Query 字段），此前误用从 path 解析出的 query 覆盖宿主传入的 `req.Query`，导致管理后台「OAuth 登录」下发的授权链接打开后显示「缺少 state 参数」、无法完成绑定。
+- 新增宿主调用契约回归测试，复现「Path 不含 query + 参数在 Query」的真实调用形状，防止再次回归。
+
 ## [0.1.3] - 2026-10-11
 
 ### Added

@@ -37,8 +37,8 @@ func TestMain_RegistrationAndCapabilities(t *testing.T) {
 	if reg.Metadata.Name != providerName {
 		t.Fatalf("expected name %s, got %s", providerName, reg.Metadata.Name)
 	}
-	if reg.Metadata.Version != "0.1.3" {
-		t.Fatalf("expected version 0.1.3, got %s", reg.Metadata.Version)
+	if reg.Metadata.Version != "0.1.4" {
+		t.Fatalf("expected version 0.1.4, got %s", reg.Metadata.Version)
 	}
 	if !reg.Capabilities.AuthProvider {
 		t.Fatalf("expected AuthProvider capability to be true for OAuth login")
@@ -94,7 +94,6 @@ func TestMain_OAuthLoginFlow(t *testing.T) {
 	if bridgeResp.StatusCode != 200 || !strings.Contains(string(bridgeResp.Body), "授权绑定成功") {
 		t.Fatalf("bridgeResp failed: status=%d body=%s", bridgeResp.StatusCode, string(bridgeResp.Body))
 	}
-
 	// 4. Poll (success)
 	rawPoll2, _ := handleMethod(pluginabi.MethodAuthLoginPoll, pollBody)
 	var envPoll2 envelope
@@ -118,6 +117,47 @@ func TestMain_OAuthLoginFlow(t *testing.T) {
 	_ = json.Unmarshal(rawRefresh, &envRefresh)
 	if !envRefresh.OK {
 		t.Fatalf("expected AuthRefresh OK")
+	}
+}
+
+// TestMain_OAuthBridgeReceivesHostQuery 复现宿主真实调用契约：宿主把 URL path
+// 与 query 分开传递（Path 不含 query，参数在 Query），桥接页必须能读到 state。
+// 回归背景：曾用从 path 解析出的 query 覆盖 req.Query，导致 state 丢失、
+// 桥接页返回「缺少 state 参数」，管理后台授权链接不可用。
+func TestMain_OAuthBridgeReceivesHostQuery(t *testing.T) {
+	rawStart, err := handleMethod(pluginabi.MethodAuthLoginStart, nil)
+	if err != nil {
+		t.Fatalf("start login failed: %v", err)
+	}
+	var envStart envelope
+	_ = json.Unmarshal(rawStart, &envStart)
+	var startResp pluginapi.AuthLoginStartResponse
+	_ = json.Unmarshal(envStart.Result, &startResp)
+
+	// 宿主契约：Path 不含 query，query 单独在 Query 字段。
+	bridgeBody, _ := json.Marshal(pluginapi.ManagementRequest{
+		Method: "GET",
+		Path:   "/v0/resource/plugins/" + providerName + "/oauth-bridge",
+		Query:  url.Values{"state": []string{startResp.State}},
+	})
+	rawBridge, err := handleMethod(pluginabi.MethodManagementHandle, bridgeBody)
+	if err != nil {
+		t.Fatalf("management handle failed: %v", err)
+	}
+	var envBridge envelope
+	if err := json.Unmarshal(rawBridge, &envBridge); err != nil || !envBridge.OK {
+		t.Fatalf("bridge envelope not OK: %v", err)
+	}
+	var resp pluginapi.ManagementResponse
+	if err := json.Unmarshal(envBridge.Result, &resp); err != nil {
+		t.Fatalf("unmarshal management response failed: %v", err)
+	}
+	body := string(resp.Body)
+	if strings.Contains(body, "缺少 state 参数") {
+		t.Fatalf("bridge page lost the host-provided state query")
+	}
+	if !strings.Contains(body, "BigModel API Key") {
+		t.Fatalf("bridge page did not render the authorization form, body=%s", body)
 	}
 }
 

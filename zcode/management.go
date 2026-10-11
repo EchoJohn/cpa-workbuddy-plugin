@@ -138,7 +138,8 @@ func handleManagement(raw []byte) ([]byte, error) {
 	}
 
 	if method == http.MethodGet && subPath == "/oauth-bridge" {
-		req.Query = urlQuery
+		// 宿主将 URL path 与 query 分开传递：Path 不含 query，参数在 req.Query。
+		// 必须直接透传 req.Query，禁止用从 path 解析出的 query 覆盖它，否则 state 会丢失。
 		return okEnvelope(handleOAuthBridge(req))
 	}
 
