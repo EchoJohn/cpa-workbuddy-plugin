@@ -65,8 +65,9 @@ usage_poll_interval: 5s
 
 - 页面：`/v0/resource/plugins/token-usage-tracker/usage`（菜单 "Token 用量"）
 - 读接口（resource 路由，均已注册）：
-  `/stats`、`/stats/initial`、`/stats/trends`、`/stats/groups`、
+  `/stats`、`/stats/initial`、`/stats/groups`、
   `/requests`、`/costs`、`/prices`、`/preferences`、`/exchange-rate`
+- 面板只保留统计卡片与请求明细、维度汇总两张表；Token 趋势柱状图、模型占比环形图、成本趋势折线图、效率散点图与导出图表图片按钮已移除，配套的 `/stats/trends` 接口与序列聚合一并下线。
 - 写接口（management 路由，已注册，受 `management_key` 门保护）：
   `PUT /prices`、`POST /prices/sync`、`POST /reset`、`GET /backup`、
   `POST /restore`

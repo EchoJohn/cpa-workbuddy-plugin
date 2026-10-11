@@ -154,7 +154,7 @@ func (q QueryResult) isJSON() bool {
 // POST /reset, POST /restore); headers carries the original request headers.
 // Supported paths:
 //
-//	GET  /stats /stats/initial /stats/trends /stats/groups
+//	GET  /stats /stats/initial /stats/groups
 //	GET  /requests /costs /exchange-rate /prices /preferences
 //	PUT  /prices              (save price book)
 //	POST /prices/sync         (models.dev sync)
@@ -175,11 +175,6 @@ func (s *Store) HandleQuery(method, path string, query url.Values, body []byte, 
 			return methodNotAllowedResult(http.MethodGet)
 		}
 		return s.initialStatsResult(query)
-	case "/stats/trends":
-		if method != http.MethodGet {
-			return methodNotAllowedResult(http.MethodGet)
-		}
-		return s.statsTrendResult(query)
 	case "/stats/groups":
 		if method != http.MethodGet {
 			return methodNotAllowedResult(http.MethodGet)
@@ -263,17 +258,6 @@ func (s *Store) initialStatsResult(query url.Values) QueryResult {
 	return jsonQueryResult(http.StatusOK, &stats)
 }
 
-func (s *Store) statsTrendResult(query url.Values) QueryResult {
-	queryRange, err := usageRangeFromQuery(query.Get("range"), query.Get("start"), query.Get("end"), time.Now().UTC())
-	if err != nil {
-		return jsonQueryResult(errorHTTPStatus(err), map[string]any{"error": err.Error()})
-	}
-	stats, err := s.queryStatsTrendByFilter(queryRange, newUsageFilterFromIdentities(query.Get("source"), nil))
-	if err != nil {
-		return jsonQueryResult(errorHTTPStatus(err), map[string]any{"error": err.Error()})
-	}
-	return jsonQueryResult(http.StatusOK, stats)
-}
 
 func (s *Store) groupsStatsResult(query url.Values) QueryResult {
 	queryRange, err := usageRangeFromQuery(query.Get("range"), query.Get("start"), query.Get("end"), time.Now().UTC())

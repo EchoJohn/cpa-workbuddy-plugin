@@ -45,12 +45,6 @@ type ModelCostStats struct {
 	CostAmounts
 }
 
-type CostSeriesPoint struct {
-	Hour     string `json:"hour"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	CostAmounts
-}
 
 type MissingPriceStats struct {
 	Provider string `json:"provider"`
@@ -67,7 +61,6 @@ type CostResponse struct {
 	PriceBookRevision uint64              `json:"price_book_revision"`
 	Summary           CostAmounts         `json:"summary"`
 	Models            []ModelCostStats    `json:"models"`
-	Series            []CostSeriesPoint   `json:"series"`
 	MissingPrices     []MissingPriceStats `json:"missing_prices"`
 }
 
@@ -249,7 +242,6 @@ func (s *Store) queryCostsByFilter(queryRange usageRange, filter usageFilter) (C
 
 func cloneCostResponse(input CostResponse) CostResponse {
 	input.Models = append([]ModelCostStats(nil), input.Models...)
-	input.Series = append([]CostSeriesPoint(nil), input.Series...)
 	input.MissingPrices = append([]MissingPriceStats(nil), input.MissingPrices...)
 	return input
 }
@@ -264,12 +256,7 @@ func (s *Store) scanCosts(snapshot costQuerySnapshot) (CostResponse, error) {
 		PriceBookRevision: snapshot.PriceRevision,
 	}
 	type modelKey struct{ Provider, Model string }
-	type seriesKey struct {
-		Hour            int64
-		Provider, Model string
-	}
 	models := make(map[modelKey]CostAmounts)
-	series := make(map[seriesKey]CostAmounts)
 	missing := make(map[modelKey]uint64)
 	resolver := newModelPriceResolver(snapshot.Prices, snapshot.PriceSettings)
 
@@ -313,14 +300,10 @@ func (s *Store) scanCosts(snapshot costQuerySnapshot) (CostResponse, error) {
 				model = "未标记模型"
 			}
 			mKey := modelKey{Provider: provider, Model: model}
-			sKey := seriesKey{Hour: requestedAt.Truncate(time.Minute).Unix(), Provider: provider, Model: model}
 			modelAmounts := models[mKey]
-			seriesAmounts := series[sKey]
 			addEstimatedCost(&response.Summary, cost)
 			addEstimatedCost(&modelAmounts, cost)
-			addEstimatedCost(&seriesAmounts, cost)
 			models[mKey] = modelAmounts
-			series[sKey] = seriesAmounts
 			if !cost.Priced {
 				missing[mKey]++
 			}
@@ -345,24 +328,6 @@ func (s *Store) scanCosts(snapshot costQuerySnapshot) (CostResponse, error) {
 		return response.Models[i].Provider < response.Models[j].Provider
 	})
 
-	response.Series = make([]CostSeriesPoint, 0, len(series))
-	for key, amounts := range series {
-		response.Series = append(response.Series, CostSeriesPoint{
-			Hour:        time.Unix(key.Hour, 0).UTC().Format(time.RFC3339),
-			Provider:    key.Provider,
-			Model:       key.Model,
-			CostAmounts: amounts,
-		})
-	}
-	sort.Slice(response.Series, func(i, j int) bool {
-		if response.Series[i].Hour != response.Series[j].Hour {
-			return response.Series[i].Hour < response.Series[j].Hour
-		}
-		if response.Series[i].Model != response.Series[j].Model {
-			return response.Series[i].Model < response.Series[j].Model
-		}
-		return response.Series[i].Provider < response.Series[j].Provider
-	})
 
 	response.MissingPrices = make([]MissingPriceStats, 0, len(missing))
 	for key, requests := range missing {

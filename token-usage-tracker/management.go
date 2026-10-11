@@ -86,7 +86,6 @@ func managementRegistration() managementRegistrationResponse {
 			{Path: "/usage", Menu: "Token 用量", Description: "Token usage dashboard: per-model/account consumption, trends, requests, costs (records produced by the workbuddy plugin via the shared usage feed)."},
 			{Path: "/stats", Description: "Statistics summary."},
 			{Path: "/stats/initial", Description: "Initial dashboard payload."},
-			{Path: "/stats/trends", Description: "Token usage trend series."},
 			{Path: "/stats/groups", Description: "Per-dimension group stats."},
 			{Path: "/requests", Description: "Request log page."},
 			{Path: "/costs", Description: "Estimated cost page."},

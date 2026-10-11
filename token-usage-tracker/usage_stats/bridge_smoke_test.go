@@ -71,11 +71,6 @@ func TestBridgeSmoke(t *testing.T) {
 		t.Errorf("/requests Total=%d want 2", page.Total)
 	}
 
-	// GET /stats/trends
-	res = store.HandleQuery(http.MethodGet, "/stats/trends", url.Values{"range": []string{"24h"}}, nil, nil)
-	if res.Status != http.StatusOK {
-		t.Fatalf("/stats/trends status=%d body=%s", res.Status, res.Body)
-	}
 
 	// preferences save + read (GET with save=1, then plain GET)
 	res = store.HandleQuery(http.MethodGet, "/preferences", url.Values{"save": []string{"1"}, "request_page_size": []string{"50"}, "dimension_page_size": []string{"100"}}, nil, nil)

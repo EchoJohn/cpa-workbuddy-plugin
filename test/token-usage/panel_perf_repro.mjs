@@ -185,7 +185,7 @@ const buildPayload = (url) => {
   if (url.includes("/stats/initial")) {
     return { models: [], series: [], generated_at: "2026-10-08T12:00:00Z", sources: [], last_used: "" };
   }
-  if (url.includes("/stats/trends")) return { model_series: [], bucket_seconds: 3600 };
+  if (url.includes("/stats/trends")) throw new Error("图表已下线：面板不得再请求 /stats/trends");
   if (url.includes("/stats/groups")) return { items: [], total: 0 };
   if (url.includes("/requests")) return { items: [], total: 0 };
   if (url.includes("/prices")) return { prices: {}, revision: 0, sync_settings: { provider_priority: [], ignored_suffixes: [], mappings: [] }, last_sync: null };

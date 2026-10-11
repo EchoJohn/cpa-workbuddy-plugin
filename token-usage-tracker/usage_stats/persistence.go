@@ -54,7 +54,6 @@ type statsQueryMode uint8
 const (
 	statsQueryFull statsQueryMode = iota
 	statsQueryInitial
-	statsQueryTrend
 	statsQueryGroups
 )
 
@@ -68,7 +67,6 @@ type queryCommand struct {
 type queryResult struct {
 	stats   StatsResponse
 	initial InitialStatsResponse
-	trend   StatsTrendResponse
 	groups  GroupStatsPage
 	err     error
 }
@@ -347,14 +345,6 @@ func (s *Store) queryInitialStatsByFilter(queryRange usageRange, filter usageFil
 	return result.initial, result.err
 }
 
-func (s *Store) queryStatsTrendByFilter(queryRange usageRange, filter usageFilter) (StatsTrendResponse, error) {
-	resp := make(chan queryResult, 1)
-	if err := s.send(queryCommand{queryRange: queryRange, filter: filter, mode: statsQueryTrend, resp: resp}); err != nil {
-		return StatsTrendResponse{}, err
-	}
-	result := <-resp
-	return result.trend, result.err
-}
 
 func (s *Store) queryGroupsByFilter(queryRange usageRange, filter usageFilter) (GroupStatsPage, error) {
 	resp := make(chan queryResult, 1)
@@ -652,8 +642,6 @@ func (s *Store) run(actor *storeActor) {
 					switch item.mode {
 					case statsQueryInitial:
 						item.resp <- queryResult{initial: initialStatsFromFull(stats, item.queryRange)}
-					case statsQueryTrend:
-						item.resp <- queryResult{trend: trendStatsFromFull(stats, item.queryRange)}
 					case statsQueryGroups:
 						item.resp <- queryResult{groups: GroupStatsPage{SchemaVersion: 2, GeneratedAt: stats.GeneratedAt, Range: stats.Range, Items: stats.Groups, Total: len(stats.Groups)}}
 					default:
@@ -672,8 +660,6 @@ func (s *Store) run(actor *storeActor) {
 				switch item.mode {
 				case statsQueryInitial:
 					item.resp <- queryResult{initial: buildInitialStatsForRange(actor.data, actor.since, actor.lastUsed, item.queryRange, item.filter, now, actor.apiKeyCiphertexts)}
-				case statsQueryTrend:
-					item.resp <- queryResult{trend: buildStatsTrendForRange(actor.data, actor.since, item.queryRange, item.filter, now)}
 				case statsQueryGroups:
 					item.resp <- queryResult{groups: buildGroupsForRange(actor.data, item.queryRange, item.filter, now, actor.apiKeyCiphertexts)}
 				default:
