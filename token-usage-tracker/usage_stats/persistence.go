@@ -582,7 +582,7 @@ func (s *Store) RestoreBackup(backup []byte) error {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 	if s.closed {
-		return errors.New("store is closed")
+		return ErrStoreClosed
 	}
 
 	resp := make(chan restoreResult, 1)
@@ -603,11 +603,16 @@ func (s *Store) RestoreBackup(backup []byte) error {
 	return result.err
 }
 
+// ErrStoreClosed 表示 store 已关闭、命令通道不可用。调用方据此区分"稍后可重试"
+// 与"数据本身不可解析"两类失败：前者必须让写入位置保持不变，否则会永久丢记录。
+// 最近修改时间：2026-10-11；改动原因：文本与原 errors.New 保持一致，仅改为可判别的哨兵。
+var ErrStoreClosed = errors.New("store is closed")
+
 func (s *Store) send(command any) error {
 	s.stateMu.RLock()
 	defer s.stateMu.RUnlock()
 	if s.closed {
-		return errors.New("store is closed")
+		return ErrStoreClosed
 	}
 	s.commands <- command
 	return nil

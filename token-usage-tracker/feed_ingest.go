@@ -23,6 +23,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -176,6 +177,12 @@ func configure(raw []byte) {
 	})
 }
 
+// appliedStoreKey 记录当前 usageStore 句柄所对应的存储配置指纹。宿主每次配置重载都会
+// 向所有插件推送 reconfigure，若据此无条件重开 store，就会给在途写入制造"句柄已关闭"窗口
+// 并丢掉那批记录；配置实质未变时必须复用现有句柄。
+// 最近修改时间：2026-10-11；改动原因：消除无关配置重载引发的丢记录窗口。
+var appliedStoreKey string
+
 // reopenStore opens (or re-opens) the bbolt store for the given config.
 //
 // When a new store replaces an old one, the old store is closed INSIDE the
@@ -188,6 +195,7 @@ func configure(raw []byte) {
 func reopenStore(cfg trackerConfig) {
 	if !cfg.FeedEnabled {
 		storeMu.Lock()
+		appliedStoreKey = ""
 		if usageStore != nil {
 			_ = usageStore.Close()
 			usageStore = nil
@@ -206,6 +214,14 @@ func reopenStore(cfg trackerConfig) {
 	retentionDays := cfg.RetentionDays
 	if retentionDays <= 0 {
 		retentionDays = defaultUsageRetentionDays
+	}
+	key := fmt.Sprintf("%s|%d|%v|%d|%v|%v", cfg.DBPath, retentionDays, flushInterval, flushMaxRecords, cfg.DerivedSessionEnabled, cfg.DerivedSessionWindow)
+	storeMu.RLock()
+	unchanged := usageStore != nil && appliedStoreKey == key
+	storeMu.RUnlock()
+	if unchanged {
+		trackerInfof("store config unchanged, keeping current handle")
+		return
 	}
 	next, err := usagestats.Open(usagestats.Config{
 		DataPath:             cfg.DBPath,
@@ -228,6 +244,7 @@ func reopenStore(cfg trackerConfig) {
 	if err != nil {
 		trackerWarnf("storage disabled (open %s: %v)", cfg.DBPath, err)
 		storeMu.Lock()
+		appliedStoreKey = ""
 		if usageStore != nil {
 			_ = usageStore.Close()
 		}
@@ -238,6 +255,7 @@ func reopenStore(cfg trackerConfig) {
 	storeMu.Lock()
 	old := usageStore
 	usageStore = next
+	appliedStoreKey = key
 	if old != nil && old != next {
 		_ = old.Close()
 	}
@@ -488,15 +506,23 @@ func ingestFeedChunk(store *usagestats.Store, chunk []byte) int64 {
 			consumed += 1
 			continue
 		}
-		consumed += int64(len(line)) + 1
+		lineBytes := int64(len(line)) + 1
 		if int64(len(line)) > maxUsageFeedLineBytes {
+			consumed += lineBytes
 			trackerWarnf("feed: skipping oversized line (%d bytes)", len(line))
 			continue
 		}
+		// 最近修改时间：2026-10-11；改动原因：store 关闭时该行并未落库，偏移必须停在
+		// 这一行之前，否则一次宿主配置热重载就会把这批在途记录永久跳过。
 		if err := store.RecordFeedNDJSON(line); err != nil {
+			if errors.Is(err, usagestats.ErrStoreClosed) {
+				break
+			}
+			consumed += lineBytes
 			trackerWarnf("feed: skipping unparsable line: %v", err)
 			continue
 		}
+		consumed += lineBytes
 	}
 	return consumed
 }

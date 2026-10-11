@@ -45,7 +45,6 @@ type ModelCostStats struct {
 	CostAmounts
 }
 
-
 type MissingPriceStats struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
@@ -181,7 +180,7 @@ func (s *Store) queryCostsByFilter(queryRange usageRange, filter usageFilter) (C
 	s.stateMu.RLock()
 	defer s.stateMu.RUnlock()
 	if s.closed {
-		return CostResponse{}, errors.New("store is closed")
+		return CostResponse{}, ErrStoreClosed
 	}
 	resp := make(chan costSnapshotResult, 1)
 	s.commands <- costSnapshotCommand{queryRange: queryRange, filter: filter, resp: resp}
@@ -327,7 +326,6 @@ func (s *Store) scanCosts(snapshot costQuerySnapshot) (CostResponse, error) {
 		}
 		return response.Models[i].Provider < response.Models[j].Provider
 	})
-
 
 	response.MissingPrices = make([]MissingPriceStats, 0, len(missing))
 	for key, requests := range missing {
