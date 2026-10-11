@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -41,8 +40,8 @@ func TestMain_RegistrationAndCapabilities(t *testing.T) {
 	if reg.Metadata.Name != providerName {
 		t.Fatalf("expected name %s, got %s", providerName, reg.Metadata.Name)
 	}
-	if reg.Metadata.Version != "0.1.7" {
-		t.Fatalf("expected version 0.1.7, got %s", reg.Metadata.Version)
+	if reg.Metadata.Version != "0.1.8" {
+		t.Fatalf("expected version 0.1.8, got %s", reg.Metadata.Version)
 	}
 	if !reg.Capabilities.AuthProvider {
 		t.Fatalf("expected AuthProvider capability to be true for OAuth login")
@@ -50,6 +49,65 @@ func TestMain_RegistrationAndCapabilities(t *testing.T) {
 	if !reg.Capabilities.ModelProvider || !reg.Capabilities.Executor || !reg.Capabilities.Scheduler || !reg.Capabilities.ManagementAPI {
 		t.Fatalf("missing required capabilities: %+v", reg.Capabilities)
 	}
+}
+
+// mockZaiCLIServer 启动一个模拟官方 CLI OAuth 端点（init + poll）的测试服务器。
+// pollReady 控制 poll 返回 pending 还是 ready。
+func mockZaiCLIServer(t *testing.T, pollReady *bool) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/init"):
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+				http.Error(w, "missing bearer", http.StatusUnauthorized)
+				return
+			}
+			var req zaiCLIInitRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.Provider != "zai" {
+				http.Error(w, "invalid provider", http.StatusBadRequest)
+				return
+			}
+			resp := zaiCLIInitResponse{Code: 0}
+			resp.Data.FlowID = "mock-flow-id-12345"
+			resp.Data.PollToken = "mock-poll-token-67890"
+			resp.Data.AuthorizeURL = "https://chat.z.ai/api/oauth/authorize?client_id=" + zaiOAuthClientID +
+				"&redirect_uri=https://zcode.z.ai/api/v1/oauth/cli/callback/zai&state=mock-state-abcdef&response_type=code"
+			resp.Data.ExpiresAt = time.Now().Add(15 * time.Minute).Unix()
+			resp.Data.PollIntervalSec = 2
+			_ = json.NewEncoder(w).Encode(resp)
+
+		case strings.Contains(r.URL.Path, "/poll/"):
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+				http.Error(w, "missing bearer", http.StatusUnauthorized)
+				return
+			}
+			resp := zaiCLIPollResponse{Code: 0}
+			if pollReady == nil || !*pollReady {
+				resp.Data.Status = "pending"
+				_ = json.NewEncoder(w).Encode(resp)
+				return
+			}
+			resp.Data.Status = "ready"
+			resp.Data.Token = "mock_jwt_token_99999"
+			resp.Data.Zai.AccessToken = "mock_access_token_88888"
+			resp.Data.Zai.TokenType = "Bearer"
+			resp.Data.User = &ZaiUserInfo{
+				UserID: "u_test_123",
+				Name:   "测试用户",
+				Email:  "test@z.ai",
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	return ts
 }
 
 func TestMain_OAuthLoginFlow(t *testing.T) {
@@ -60,7 +118,14 @@ func TestMain_OAuthLoginFlow(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 	setAccountsDir(tempDir)
 
-	// 1. StartLogin
+	pollReady := false
+	ts := mockZaiCLIServer(t, &pollReady)
+	defer ts.Close()
+	mockOAuthCLIInitURL = ts.URL + "/init"
+	mockOAuthCLIPollURL = ts.URL + "/poll/"
+	defer func() { mockOAuthCLIInitURL = ""; mockOAuthCLIPollURL = "" }()
+
+	// 1. StartLogin：必须返回官方 CLI 签发的 authorize_url（含服务端注册回调）
 	rawStart, err := handleMethod(pluginabi.MethodAuthLoginStart, nil)
 	if err != nil {
 		t.Fatalf("handleMethod AuthLoginStart failed: %v", err)
@@ -76,19 +141,27 @@ func TestMain_OAuthLoginFlow(t *testing.T) {
 	if startResp.Provider != providerName || startResp.State == "" {
 		t.Fatalf("unexpected startResp: %+v", startResp)
 	}
-	if !strings.HasPrefix(startResp.URL, "https://chat.z.ai/auth?") {
-		t.Fatalf("expected Z.ai auth URL, got %s", startResp.URL)
+	if !strings.HasPrefix(startResp.URL, "https://chat.z.ai/api/oauth/authorize?") {
+		t.Fatalf("expected official CLI authorize URL, got %s", startResp.URL)
 	}
 	if !strings.Contains(startResp.URL, "client_id=client_P8X5CMWmlaRO9gyO-KSqtg") {
 		t.Fatalf("expected client_id in auth URL, got %s", startResp.URL)
 	}
-	if !strings.Contains(startResp.URL, "response_type=code") {
+	// 关键回归：回调必须是官方服务端注册地址，绝不能是本地地址（否则被白名单拒绝）
+	startURL, errParseStart := url.Parse(startResp.URL)
+	if errParseStart != nil {
+		t.Fatalf("parse start URL failed: %v", errParseStart)
+	}
+	if gotRedirect := startURL.Query().Get("redirect_uri"); gotRedirect != "https://zcode.z.ai/api/v1/oauth/cli/callback/zai" {
+		t.Fatalf("expected server-registered CLI callback redirect_uri, got %q", gotRedirect)
+	}
+	if strings.Contains(startResp.URL, "localhost") || strings.Contains(startResp.URL, "127.0.0.1") {
+		t.Fatalf("auth URL must not use a local redirect_uri (rejected by whitelist): %s", startResp.URL)
+	}
+	if startURL.Query().Get("response_type") != "code" {
 		t.Fatalf("expected response_type=code in auth URL, got %s", startResp.URL)
 	}
-	if !strings.Contains(startResp.URL, "localhost%3A1455%2Fauth%2Fcallback") {
-		t.Fatalf("expected CPA callback redirect_uri in auth URL, got %s", startResp.URL)
-	}
-	if !strings.Contains(startResp.URL, "state="+startResp.State) {
+	if startURL.Query().Get("state") != startResp.State {
 		t.Fatalf("expected state in auth URL, got %s", startResp.URL)
 	}
 
@@ -106,49 +179,10 @@ func TestMain_OAuthLoginFlow(t *testing.T) {
 		t.Fatalf("expected pending status, got %s", pollResp.Status)
 	}
 
-	// 3. 启动 Mock 上游 Token 交换服务器
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req zaiTokenRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		if req.Provider != "zai" || req.Code != "test-auth-code-12345" {
-			http.Error(w, "invalid request", http.StatusBadRequest)
-			return
-		}
-		resp := zaiTokenResponse{
-			Code: 0,
-			Msg:  "",
-		}
-		resp.Data.Token = "mock_jwt_token_99999"
-		resp.Data.ExpiresIn = 2592000
-		resp.Data.Zai.AccessToken = "mock_access_token_88888"
-		resp.Data.Zai.TokenType = "Bearer"
-		resp.Data.User = &ZaiUserInfo{
-			UserID: "u_test_123",
-			Name:   "测试用户",
-			Email:  "test@z.ai",
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer ts.Close()
-	mockOAuthTokenURL = ts.URL
-	defer func() { mockOAuthTokenURL = "" }()
+	// 3. 模拟用户在浏览器完成授权（poll 转为 ready）
+	pollReady = true
 
-	// 4. 模拟在桥接页提交完整回调 URL
-	callbackURL := "http://localhost:1455/auth/callback?code=test-auth-code-12345&state=" + startResp.State
-	q := url.Values{}
-	q.Set("state", startResp.State)
-	q.Set("callback_url", callbackURL)
-	bridgeReq := pluginapi.ManagementRequest{
-		Method: "GET",
-		Path:   "/v0/resource/plugins/" + providerName + "/oauth-bridge",
-		Query:  q,
-	}
-	bridgeResp := handleOAuthBridge(bridgeReq)
-	if bridgeResp.StatusCode != 200 || !strings.Contains(string(bridgeResp.Body), "授权绑定成功") {
-		t.Fatalf("bridgeResp failed: status=%d body=%s", bridgeResp.StatusCode, string(bridgeResp.Body))
-	}
-
-	// 5. Poll (success)
+	// 4. Poll (success)：插件主动轮询官方端点后落盘账号
 	rawPoll2, _ := handleMethod(pluginabi.MethodAuthLoginPoll, pollBody)
 	var envPoll2 envelope
 	_ = json.Unmarshal(rawPoll2, &envPoll2)
@@ -159,6 +193,12 @@ func TestMain_OAuthLoginFlow(t *testing.T) {
 	}
 	if pollResp2.Auth.Provider != providerName || !strings.Contains(pollResp2.Auth.Label, "测试用户") {
 		t.Fatalf("unexpected Auth record: %+v", pollResp2.Auth)
+	}
+
+	// 5. 账号已落盘
+	list, errList := listAllAuthFiles()
+	if errList != nil || len(list) != 1 {
+		t.Fatalf("expected 1 persisted account, got %d (err=%v)", len(list), errList)
 	}
 
 	// 6. Refresh
@@ -176,9 +216,13 @@ func TestMain_OAuthLoginFlow(t *testing.T) {
 
 // TestMain_OAuthBridgeReceivesHostQuery 复现宿主真实调用契约：宿主把 URL path
 // 与 query 分开传递（Path 不含 query，参数在 Query），桥接页必须能读到 state。
-// 回归背景：曾用从 path 解析出的 query 覆盖 req.Query，导致 state 丢失、
-// 桥接页返回「缺少 state 参数」，管理后台授权链接不可用。
 func TestMain_OAuthBridgeReceivesHostQuery(t *testing.T) {
+	ts := mockZaiCLIServer(t, nil)
+	defer ts.Close()
+	mockOAuthCLIInitURL = ts.URL + "/init"
+	mockOAuthCLIPollURL = ts.URL + "/poll/"
+	defer func() { mockOAuthCLIInitURL = ""; mockOAuthCLIPollURL = "" }()
+
 	rawStart, err := handleMethod(pluginabi.MethodAuthLoginStart, nil)
 	if err != nil {
 		t.Fatalf("start login failed: %v", err)
@@ -215,77 +259,99 @@ func TestMain_OAuthBridgeReceivesHostQuery(t *testing.T) {
 	}
 }
 
-func TestZaiOAuth_ExactUserURLMatch(t *testing.T) {
-	state := "a87957462749638ca95fb1afe0073c43"
-	got := buildZaiAuthorizeURL(state, "")
-	expected := "https://chat.z.ai/auth?client_id=client_P8X5CMWmlaRO9gyO-KSqtg&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&response_type=code&state=a87957462749638ca95fb1afe0073c43"
+// TestZaiOAuth_AuthorizeURLUsesRegisteredCallback 锁定 redirect_uri 必须为官方
+// 服务端注册地址（回归：曾照抄桌面端 deep-link / 改用本地回调，均被白名单拒绝）。
+func TestZaiOAuth_AuthorizeURLUsesRegisteredCallback(t *testing.T) {
+	ts := mockZaiCLIServer(t, nil)
+	defer ts.Close()
+	mockOAuthCLIInitURL = ts.URL + "/init"
+	mockOAuthCLIPollURL = ts.URL + "/poll/"
+	defer func() { mockOAuthCLIInitURL = ""; mockOAuthCLIPollURL = "" }()
 
-	uGot, err1 := url.Parse(got)
-	uExp, err2 := url.Parse(expected)
-	if err1 != nil || err2 != nil {
-		t.Fatalf("parse url failed: %v %v", err1, err2)
+	initResp, err := zaiCLIInit("zai")
+	if err != nil {
+		t.Fatalf("zaiCLIInit failed: %v", err)
 	}
-	if uGot.Scheme != uExp.Scheme || uGot.Host != uExp.Host || uGot.Path != uExp.Path {
-		t.Fatalf("URL mismatch: got %s vs exp %s", got, expected)
+	if initResp.Data.FlowID == "" || initResp.Data.PollToken == "" {
+		t.Fatalf("expected flow_id and poll_token, got %+v", initResp.Data)
 	}
-	qGot := uGot.Query()
-	qExp := uExp.Query()
-	for k := range qExp {
-		if qGot.Get(k) != qExp.Get(k) {
-			t.Fatalf("param %s mismatch: got %q vs exp %q", k, qGot.Get(k), qExp.Get(k))
-		}
+
+	u, errParse := url.Parse(initResp.Data.AuthorizeURL)
+	if errParse != nil {
+		t.Fatalf("parse authorize_url failed: %v", errParse)
+	}
+	if u.Host != "chat.z.ai" || u.Path != "/api/oauth/authorize" {
+		t.Fatalf("unexpected authorize endpoint: %s", initResp.Data.AuthorizeURL)
+	}
+	q := u.Query()
+	if q.Get("client_id") != zaiOAuthClientID {
+		t.Fatalf("unexpected client_id: %s", q.Get("client_id"))
+	}
+	if q.Get("redirect_uri") != "https://zcode.z.ai/api/v1/oauth/cli/callback/zai" {
+		t.Fatalf("redirect_uri must be the server-registered CLI callback, got %s", q.Get("redirect_uri"))
+	}
+	if q.Get("response_type") != "code" || q.Get("state") == "" {
+		t.Fatalf("missing response_type/state: %s", initResp.Data.AuthorizeURL)
 	}
 }
 
-func TestZaiOAuth_HostCallbackFile(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "zcode_host_cb_*")
+// TestZaiOAuth_PollFailedReturnsError 验证 status=failed 时正确上报失败。
+func TestZaiOAuth_PollFailedReturnsError(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "zcode_poll_failed_*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tempDir)
 	setAccountsDir(tempDir)
 
-	state := "test_host_cb_state_12345"
-	session := &oauthLoginSession{CreatedAt: time.Now()}
-	oauthSessions.Store(state, session)
-
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req zaiTokenRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		resp := zaiTokenResponse{Code: 0}
-		resp.Data.Token = "mock_token_from_host_cb"
-		resp.Data.ExpiresIn = 86400
-		resp.Data.User = &ZaiUserInfo{UserID: "u_cb", Name: "回调用户"}
+		if strings.HasSuffix(r.URL.Path, "/init") {
+			resp := zaiCLIInitResponse{Code: 0}
+			resp.Data.FlowID = "failed-flow"
+			resp.Data.PollToken = "pt"
+			resp.Data.AuthorizeURL = "https://chat.z.ai/api/oauth/authorize?state=failed-state-1&response_type=code"
+			resp.Data.ExpiresAt = time.Now().Add(10 * time.Minute).Unix()
+			resp.Data.PollIntervalSec = 2
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		resp := zaiCLIPollResponse{Code: 0}
+		resp.Data.Status = "failed"
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer ts.Close()
-	mockOAuthTokenURL = ts.URL
-	defer func() { mockOAuthTokenURL = "" }()
+	mockOAuthCLIInitURL = ts.URL + "/init"
+	mockOAuthCLIPollURL = ts.URL + "/poll/"
+	defer func() { mockOAuthCLIInitURL = ""; mockOAuthCLIPollURL = "" }()
 
-	cbFile := filepath.Join(tempDir, ".oauth-"+providerName+"-"+state+".oauth")
-	payload := map[string]string{
-		"code":  "cb_auth_code_999",
-		"state": state,
-	}
-	cbData, _ := json.Marshal(payload)
-	if err := os.WriteFile(cbFile, cbData, 0600); err != nil {
-		t.Fatalf("write cb file failed: %v", err)
-	}
+	rawStart, _ := handleMethod(pluginabi.MethodAuthLoginStart, nil)
+	var envStart envelope
+	_ = json.Unmarshal(rawStart, &envStart)
+	var startResp pluginapi.AuthLoginStartResponse
+	_ = json.Unmarshal(envStart.Result, &startResp)
 
-	pollBody, _ := json.Marshal(pluginapi.AuthLoginPollRequest{State: state})
-	rawPoll, err := handleMethod(pluginabi.MethodAuthLoginPoll, pollBody)
-	if err != nil {
-		t.Fatalf("poll failed: %v", err)
-	}
+	pollBody, _ := json.Marshal(pluginapi.AuthLoginPollRequest{State: startResp.State})
+	rawPoll, _ := handleMethod(pluginabi.MethodAuthLoginPoll, pollBody)
 	var envPoll envelope
 	_ = json.Unmarshal(rawPoll, &envPoll)
 	var pollResp pluginapi.AuthLoginPollResponse
 	_ = json.Unmarshal(envPoll.Result, &pollResp)
-	if pollResp.Status != pluginapi.AuthLoginStatusSuccess {
-		t.Fatalf("expected success, got %s: %s", pollResp.Status, pollResp.Message)
+	if pollResp.Status != pluginapi.AuthLoginStatusError {
+		t.Fatalf("expected error status for failed flow, got %s", pollResp.Status)
 	}
-	if !strings.Contains(pollResp.Auth.Label, "回调用户") {
-		t.Fatalf("unexpected label: %s", pollResp.Auth.Label)
+}
+
+// TestZaiOAuth_InitFailurePropagates 验证 init 失败时 StartLogin 返回错误。
+func TestZaiOAuth_InitFailurePropagates(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"code":500,"msg":"init exploded"}`, http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+	mockOAuthCLIInitURL = ts.URL + "/init"
+	defer func() { mockOAuthCLIInitURL = "" }()
+
+	if _, err := handleMethod(pluginabi.MethodAuthLoginStart, nil); err == nil {
+		t.Fatalf("expected StartLogin to fail when cli init fails")
 	}
 }
 

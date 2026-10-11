@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8] - 2026-10-12
+
+### Fixed
+- **彻底修复 OAuth 授权失败（`Redirect URI not registered for this client`）**：经 `zcode.z.ai` 线上接口实测 + ZCode 3.15.1 桌面端 `app.asar` 逆向确认，`chat.z.ai` 对 `client_id` 执行 redirect_uri 严格白名单，仅接受服务端注册的 `https://zcode.z.ai/api/v1/oauth/cli/callback/zai`；此前照抄桌面端 deep-link 或改用 CPA 本地回调（`localhost:1455` / `127.0.0.1:8317`）均被拒绝。
+- **重构为官方 CLI 轮询链路**：`handleStartLogin` 改为调用 `POST /api/v1/oauth/cli/init` 获取服务端签发的 `authorize_url`（回调已注册）；`handlePollLogin` 改为轮询 `GET /api/v1/oauth/cli/poll/<flow_id>`，`status=ready` 时一次性取得 `token`（ZCode JWT）、`zai.access_token` 与用户档案并落盘。
+- 移除本地回调桥接与 `redirect_uri` 手工回传路径，桥接页改为引导跳转 + 结果查询；新增 3 项回归测试锁定「授权地址必须使用官方注册回调」与 init/poll 失败分支。
+
 ## [0.1.7] - 2026-10-11
 
 ### Fixed
