@@ -19,10 +19,8 @@
 
 - 状态：活跃维护中。9 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。最新发布/就绪版本：
   - `cursor-provider`: **0.1.4**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
-  - `qoder-ai-provider`: **0.1.6**（纯 Go 实现阿里云安全盾 UMID 协议与设备指纹，彻底修复签到活动隐藏与风控拦截，生产真实验证通过）
-  - `zcode-provider`: **0.1.1**（全新完成移植接入：BigModel Coding Plan Anthropic 协议、客户端桌面指纹 mimic、多账号与探活面板）
-  - `traework-provider`: **0.2.5**（修复签到 x-device-id 尾零风控拦截 9074、调度器绝对时间对齐、默认会话路由与配置动态联动打通）
-  - `qoderwork-provider`: **0.9.27**（CN 签到端点迁移 campaigns，彻底移除保号池，对齐测试标签与低积分排序调度）
+  - `qoderwork-provider`: **0.9.28**（模型推理请求终止契约与超时加固、全协议形态 [DONE] 识别即时退出、10m Context 超时保护）
+  - `qoder-ai-provider`: **0.1.7**（模型推理请求终止契约与超时加固、全协议形态 [DONE] 识别即时退出、10m Context 超时保护）
   - `workbuddy-provider`: **0.15.4**（5 模型轮测探活、移除保号池、硬排除测试标签 + 低积分优先）
   - `workbuddy-ai-provider`: **0.1.9**（补齐完整路由层单测资产、5 模型轮测探活、国际版签到）
   - `gemini-provider`: **0.1.1**
@@ -62,13 +60,24 @@
     2. **全链路 Context 超时与会话驱逐对齐**：`rebuildRequestWithQoderAuth` 支持继承 Context；非流式与同步路径施加 10 分钟预算超时；换号前统一驱逐会话绑定。
     3. **UTF-8 安全截断与 prompt 降级兜底**：使用 `[]rune(prompt)[:30]` 字符切片；`extractLatestUserPrompt` 增加非 user 消息优雅降级。
     4. **消除 streamCloseOnce 内存泄露**：在 `once.Do` 执行后主动清理 map 条目。
-  - 验证与门禁全绿：
-    - `python scripts/cgo-shim-build.py qoderwork` build/vet/test 全绿（7.112s）；
-    - `python scripts/cgo-shim-build.py qoder-ai` build/vet/test 全绿（7.188s）；
-    - `python scripts/cgo-shim-build.py workbuddy` 基线验证全绿（11.273s）；
-    - 新增单测通过并经必失败哨兵反证确证真实进入编译；
-    - 6-review 风格回归归档 `doc/6-review/2026-10-11_173500_Qoder插件推理请求终止契约与超时加固_6-review.md`（STYLE: PASS）；
-    - 知识库沉淀 `Qoder插件推理请求终止契约与KeepAlive超时规避.md`。
+  - 发布闭环与生产验收（全链路完成）：
+    - 两个插件版本升级：`qoderwork-provider 0.9.28` 与 `qoder-ai-provider 0.1.7`；
+    - 代码与资产提交推送 main（commits `1852d06`, `ca7c730`, `2f02962`, `e2fd430`, `e384366`, `eba72ca`）；
+    - GitHub Actions CI 构建 run `38132055925` (qoderwork) 与 `38133167082` (qoder-ai) 全 73/73 jobs 全部成功；
+    - 两个插件各自 8 个 Release 资产（7 平台 zip + checksums）下载并校验 `ALL CHECKSUMS OK` 入库；
+    - `registry.json` 顺利同步回填并通过校验，远端 raw URL 14/14 资产全部 200 OK 且哈希一致；
+    - 生产服务器执行 `plugin-store install` 顺利热重载生效（`qoderwork-provider active_version=0.9.28` / `qoder-ai-provider active_version=0.1.7`，`restart_required=false` 零容器重启）；
+    - 生产真实账号探活验收：qoderwork 调用返回 `{"ok":true,"model":"auto","elapsed":"1.221s"}`，qoder-ai 调用返回 `{"ok":true,"model":"auto","elapsed":"182ms"}`，耗时大幅收敛，推理长超时与卡死彻底消除；
+    - 发布后清理：运行 `prune-release-assets.py --apply` 删除 0.9.27 与 0.1.6 历史资产，释放 40.6 MB 空间并推送到 main。
+
+- 当前会话（2026-10-11）：**新增「生产配置存储红线（不手工改数据库表）」到仓库级规则与发布 skill**：
+  - 用户口径：「写进发布 skill」「同时补进」——把上一轮澄清的「更新插件走 `plugin-store install`、CPA 自动维护 `config_store`、零人工介入」固化为强制红线。
+  - 依据与证据：`plugin-store install` 自动把 version + 7 平台 artifacts 写入 `config_store.content` 的 `plugins.configs.<id>` 并热重载（18:04:53 `zcode-provider` 0.1.3 install 前后两次配置快照 diff，唯一实质差异即该插件 version 与 artifacts）；反例为外部会话 `select content` 后二次序列化写回，两次致生产管理面 404 + 外网 502。
+  - 落点：
+    1. `AGENTS.md` / `CLAUDE.md`「项目特有规则 → 仓库与发布」在重启红线后新增「生产配置存储红线（不手工改数据库表，强制）」（两文件编辑后仍逐字节一致）；
+    2. 项目 skill `project-cpa-workbuddy-plugin-release-rules`：Step 13 新增「⛔ 更新插件不需要手工改数据库表（强制红线）」子章节、权责边界新增「不直接读写生产 `config_store` 表」条、踩坑清单追加第 54 条，`references/source-notes.md` 追加变更记录；
+    3. `PROJECT_MEMORY.md`（核心记忆 + 变更记录）、`PROJECT_HISTORY.md`（事件置顶 + 裁剪至 20 条 + 计数锚点同步）同步。
+  - 红线要点：改插件配置只走 install；非插件配置走 `PUT /v8/management/config`；数据库表**只读不写**（`select` 可以，读完绝不写回）；损坏铁证 = 原反斜杠被再转义一层（`\"` → `\\"`）+ `char(10)` 真实换行数 = 1。
 
 - 当前会话（2026-10-11）：**吸收「生产容器重启红线」到项目规则与 skill（非必要不重启 cpa 容器）**：
   - 用户口径：非必要不要重启生产的 cpa 容器；插件的更新安装一般不需要重启（`plugin-store install` 热重载即生效）。
