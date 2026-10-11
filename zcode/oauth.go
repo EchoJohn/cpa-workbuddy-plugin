@@ -18,14 +18,15 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
-// Z.ai 官方 OAuth 配置常量（与 ZCode 3.15.1 官方桌面端完全一致）
+// Z.ai 官方 OAuth 配置常量
 const (
-	zaiOAuthAuthorizeURL = "https://chat.z.ai/auth"
-	zaiOAuthClientID     = "client_P8X5CMWmlaRO9gyO-KSqtg"
-	zaiOAuthRedirectURI  = "https://zcode.z.ai/app/oauth/login?redirect=zcode%3A%2F%2Foauth%2Fcallback&app_version=3.15.1"
-	zaiOAuthTokenURL     = "https://zcode.z.ai/api/v1/oauth/token"
-	zaiBusinessLoginURL  = "https://api.z.ai/api/auth/z/login"
-	oauthTTL             = 15 * time.Minute
+	zaiOAuthAuthorizeURL    = "https://chat.z.ai/auth"
+	zaiOAuthClientID        = "client_P8X5CMWmlaRO9gyO-KSqtg"
+	defaultCPACallbackURL   = "http://localhost:1455/auth/callback"
+	desktopOAuthRedirectURI = "https://zcode.z.ai/app/oauth/login?redirect=zcode%3A%2F%2Foauth%2Fcallback&app_version=3.15.1"
+	zaiOAuthTokenURL        = "https://zcode.z.ai/api/v1/oauth/token"
+	zaiBusinessLoginURL     = "https://api.z.ai/api/auth/z/login"
+	oauthTTL                = 15 * time.Minute
 )
 
 var (
@@ -34,10 +35,11 @@ var (
 )
 
 type oauthLoginSession struct {
-	CreatedAt time.Time
-	Auth      *pluginapi.AuthData
-	Error     string
-	Completed bool
+	CreatedAt   time.Time
+	RedirectURI string
+	Auth        *pluginapi.AuthData
+	Error       string
+	Completed   bool
 }
 
 var oauthSessions sync.Map
@@ -48,12 +50,15 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-// buildZaiAuthorizeURL 生成真实的 Z.ai 登录授权链接。
-func buildZaiAuthorizeURL(state string) string {
+// buildZaiAuthorizeURL 生成用于 CPA 授权登录的 Z.ai 授权链接（回调指向 CPA 回调端口，避免调起本地 ZCode 桌面端）。
+func buildZaiAuthorizeURL(state, redirectURI string) string {
+	if redirectURI == "" {
+		redirectURI = defaultCPACallbackURL
+	}
 	q := url.Values{}
 	q.Set("response_type", "code")
 	q.Set("client_id", zaiOAuthClientID)
-	q.Set("redirect_uri", zaiOAuthRedirectURI)
+	q.Set("redirect_uri", redirectURI)
 	q.Set("state", state)
 	return zaiOAuthAuthorizeURL + "?" + q.Encode()
 }
@@ -82,7 +87,7 @@ type zaiTokenResponse struct {
 }
 
 // exchangeZaiOAuthCode 向 ZCode 上游交换授权码为正式 Token 并落盘保存账号。
-func exchangeZaiOAuthCode(code, state, label string) (*StoredAuth, error) {
+func exchangeZaiOAuthCode(code, state, redirectURI, label string) (*StoredAuth, error) {
 	code = strings.TrimSpace(code)
 	state = strings.TrimSpace(state)
 	if code == "" {
@@ -94,78 +99,100 @@ func exchangeZaiOAuthCode(code, state, label string) (*StoredAuth, error) {
 		tokenURL = mockOAuthTokenURL
 	}
 
-	reqPayload := zaiTokenRequest{
-		Provider:    "zai",
-		Code:        code,
-		RedirectURI: zaiOAuthRedirectURI,
-		State:       state,
-	}
-	bodyBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal token request: %w", err)
+	primaryRedirect := strings.TrimSpace(redirectURI)
+	if primaryRedirect == "" {
+		primaryRedirect = defaultCPACallbackURL
 	}
 
-	httpReq, err := http.NewRequest(http.MethodPost, tokenURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("create token request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-
-	httpResp, err := oauthHTTPClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("request oauth token: %w", err)
-	}
-	defer httpResp.Body.Close()
-
-	respRaw, err := io.ReadAll(io.LimitReader(httpResp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read oauth token response: %w", err)
+	// 候选 redirect_uri 列表（优先当前会话指定的 CPA 回调地址，其次备选桌面客户端地址，容错兜底）
+	candidates := []string{primaryRedirect}
+	if primaryRedirect != desktopOAuthRedirectURI {
+		candidates = append(candidates, desktopOAuthRedirectURI)
 	}
 
-	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		return nil, fmt.Errorf("oauth token upstream error %d: %s", httpResp.StatusCode, string(respRaw))
-	}
-
-	var tokenResp zaiTokenResponse
-	if err := json.Unmarshal(respRaw, &tokenResp); err != nil {
-		return nil, fmt.Errorf("parse oauth token response: %w", err)
-	}
-
-	if tokenResp.Code != 0 {
-		msg := strings.TrimSpace(tokenResp.Msg)
-		if msg == "" {
-			msg = fmt.Sprintf("code=%d", tokenResp.Code)
+	var lastErr error
+	for _, curRedirect := range candidates {
+		reqPayload := zaiTokenRequest{
+			Provider:    "zai",
+			Code:        code,
+			RedirectURI: curRedirect,
+			State:       state,
 		}
-		return nil, fmt.Errorf("Z.ai token 交换失败: %s", msg)
+		bodyBytes, err := json.Marshal(reqPayload)
+		if err != nil {
+			return nil, fmt.Errorf("marshal token request: %w", err)
+		}
+
+		httpReq, err := http.NewRequest(http.MethodPost, tokenURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, fmt.Errorf("create token request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+
+		httpResp, err := oauthHTTPClient.Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("request oauth token: %w", err)
+			continue
+		}
+
+		respRaw, err := io.ReadAll(io.LimitReader(httpResp.Body, 1<<20))
+		_ = httpResp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("read oauth token response: %w", err)
+			continue
+		}
+
+		if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+			lastErr = fmt.Errorf("oauth token upstream error %d: %s", httpResp.StatusCode, string(respRaw))
+			continue
+		}
+
+		var tokenResp zaiTokenResponse
+		if err := json.Unmarshal(respRaw, &tokenResp); err != nil {
+			lastErr = fmt.Errorf("parse oauth token response: %w", err)
+			continue
+		}
+
+		if tokenResp.Code != 0 {
+			msg := strings.TrimSpace(tokenResp.Msg)
+			if msg == "" {
+				msg = fmt.Sprintf("code=%d", tokenResp.Code)
+			}
+			lastErr = fmt.Errorf("Z.ai token 交换失败: %s", msg)
+			continue
+		}
+
+		jwtToken := strings.TrimSpace(tokenResp.Data.Token)
+		accessToken := strings.TrimSpace(tokenResp.Data.Zai.AccessToken)
+		if jwtToken == "" && accessToken == "" {
+			lastErr = fmt.Errorf("token 交换响应缺少 data.token 或 data.zai.access_token")
+			continue
+		}
+
+		var expiresAt time.Time
+		if tokenResp.Data.ExpiresIn > 0 {
+			expiresAt = time.Now().Add(time.Duration(tokenResp.Data.ExpiresIn) * time.Second)
+		} else {
+			expiresAt = time.Now().Add(30 * 24 * time.Hour)
+		}
+
+		// 落盘写入账号
+		sa, errSave := saveZaiAccount(jwtToken, accessToken, "", tokenResp.Data.User, expiresAt, label)
+		if errSave != nil {
+			return nil, fmt.Errorf("save account: %w", errSave)
+		}
+		return sa, nil
 	}
 
-	jwtToken := strings.TrimSpace(tokenResp.Data.Token)
-	accessToken := strings.TrimSpace(tokenResp.Data.Zai.AccessToken)
-	if jwtToken == "" && accessToken == "" {
-		return nil, fmt.Errorf("token 交换响应缺少 data.token 或 data.zai.access_token")
-	}
-
-	var expiresAt time.Time
-	if tokenResp.Data.ExpiresIn > 0 {
-		expiresAt = time.Now().Add(time.Duration(tokenResp.Data.ExpiresIn) * time.Second)
-	} else {
-		expiresAt = time.Now().Add(30 * 24 * time.Hour)
-	}
-
-	// 落盘写入账号
-	sa, errSave := saveZaiAccount(jwtToken, accessToken, "", tokenResp.Data.User, expiresAt, label)
-	if errSave != nil {
-		return nil, fmt.Errorf("save account: %w", errSave)
-	}
-	return sa, nil
+	return nil, lastErr
 }
 
-// extractCodeAndState 从任意输入（完整回调 URL 或单个 code）中提取 code 和 state。
-func extractCodeAndState(input string) (string, string) {
+// extractCodeAndState 从任意输入（完整回调 URL 或单个 code）中提取 code、state 与回调基地址。
+func extractCodeAndState(input string) (code, state, callbackURI string) {
 	raw := strings.TrimSpace(input)
 	if raw == "" {
-		return "", ""
+		return "", "", ""
 	}
 	if strings.Contains(raw, "?") || strings.Contains(raw, "&") || strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "zcode://") {
 		uStr := raw
@@ -179,12 +206,16 @@ func extractCodeAndState(input string) (string, string) {
 				c = q.Get("authCode")
 			}
 			s := q.Get("state")
+			cleanU := *u
+			cleanU.RawQuery = ""
+			cleanU.Fragment = ""
+			cbURI := cleanU.String()
 			if c != "" {
-				return strings.TrimSpace(c), strings.TrimSpace(s)
+				return strings.TrimSpace(c), strings.TrimSpace(s), cbURI
 			}
 		}
 	}
-	return raw, ""
+	return raw, "", ""
 }
 
 // checkHostCallbackPayload 检查宿主是否在凭据目录写入了 .oauth-zcode-provider-<state>.oauth 回调文件。
@@ -216,32 +247,39 @@ func checkHostCallbackPayload(state string) (string, bool) {
 	return "", false
 }
 
-// handleStartLogin 处理宿主发起 OAuth 登录请求，生成带唯一 32 字符 hex state 的 Z.ai 官方登录授权链接。
+// handleStartLogin 处理宿主发起 OAuth 登录请求，生成回调指向 CPA 的 Z.ai 官方登录授权链接。
 func handleStartLogin(raw []byte) ([]byte, error) {
 	var req pluginapi.AuthLoginStartRequest
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &req)
 	}
 
-	state := randomHex(16) // 32 字符十六进制，与官方客户端和标准协议对齐
+	redirectURI := strings.TrimSpace(req.BaseURL)
+	if redirectURI == "" {
+		redirectURI = defaultCPACallbackURL
+	}
+
+	state := randomHex(16) // 32 字符十六进制，与官方标准对齐
 	session := &oauthLoginSession{
-		CreatedAt: time.Now(),
+		CreatedAt:   time.Now(),
+		RedirectURI: redirectURI,
 	}
 	oauthSessions.Store(state, session)
 
-	authURL := buildZaiAuthorizeURL(state)
+	authURL := buildZaiAuthorizeURL(state, redirectURI)
 	bridgeURL := "/v0/resource/plugins/" + providerName + "/oauth-bridge?state=" + url.QueryEscape(state)
 	now := time.Now()
 	return okEnvelope(pluginapi.AuthLoginStartResponse{
 		Provider:  providerName,
-		URL:       authURL, // 打开链接直达 Z.ai 官方登录授权
+		URL:       authURL, // CPA 授权链接：回调直接指向 CPA 回调端口（http://localhost:1455/auth/callback），避免调起本地 ZCode
 		State:     state,
 		ExpiresAt: now.Add(oauthTTL).UTC(),
 		Metadata: map[string]any{
-			"logo":       pluginLogoURL,
-			"auth_url":   authURL,
-			"bridge_url": bridgeURL,
-			"prompt":     "请在打开的 Z.ai 页面完成登录授权；完成后复制浏览器地址栏的完整跳转网址（含 code 与 state）粘贴到下方提交。",
+			"logo":         pluginLogoURL,
+			"auth_url":     authURL,
+			"bridge_url":   bridgeURL,
+			"redirect_uri": redirectURI,
+			"prompt":       "请在打开的 Z.ai 页面完成登录授权；登录后浏览器将跳转至 CPA 回调地址，复制浏览器地址栏的完整跳转网址（含 code 与 state）粘贴到下方提交。",
 		},
 	})
 }
@@ -304,7 +342,11 @@ func handlePollLogin(raw []byte) ([]byte, error) {
 
 	// 2. 检查宿主是否写入了回调载荷文件
 	if code, found := checkHostCallbackPayload(state); found {
-		stored, errExchange := exchangeZaiOAuthCode(code, state, "")
+		redirectURI := session.RedirectURI
+		if redirectURI == "" {
+			redirectURI = defaultCPACallbackURL
+		}
+		stored, errExchange := exchangeZaiOAuthCode(code, state, redirectURI, "")
 		if errExchange != nil {
 			session.Error = errExchange.Error()
 			session.Completed = true
@@ -393,7 +435,7 @@ func handleOAuthBridge(req pluginapi.ManagementRequest) pluginapi.ManagementResp
 
 	// 用户提交了回调 URL 或 code
 	if input != "" {
-		code, parsedState := extractCodeAndState(input)
+		code, parsedState, parsedRedirect := extractCodeAndState(input)
 		if parsedState != "" && parsedState != state {
 			// 若回调 URL 中携带了新的 state，优先校验
 			state = parsedState
@@ -404,7 +446,15 @@ func handleOAuthBridge(req pluginapi.ManagementRequest) pluginapi.ManagementResp
 		}
 
 		// 向上游兑换 Token 并落盘
-		stored, errExchange := exchangeZaiOAuthCode(code, state, label)
+		redirectURI := session.RedirectURI
+		if parsedRedirect != "" {
+			redirectURI = parsedRedirect
+		}
+		if redirectURI == "" {
+			redirectURI = defaultCPACallbackURL
+		}
+
+		stored, errExchange := exchangeZaiOAuthCode(code, state, redirectURI, label)
 		if errExchange != nil {
 			session.Error = "授权交换失败: " + errExchange.Error()
 			session.Completed = true
@@ -439,7 +489,7 @@ func handleOAuthBridge(req pluginapi.ManagementRequest) pluginapi.ManagementResp
 	}
 
 	// 首次打开：渲染授权引导表单
-	authURL := buildZaiAuthorizeURL(state)
+	authURL := buildZaiAuthorizeURL(state, session.RedirectURI)
 	return oauthBridgeFormHTML(state, authURL)
 }
 
@@ -509,7 +559,7 @@ func oauthBridgeFormHTML(state, authURL string) pluginapi.ManagementResponse {
 	b.WriteString("<img class=\"logo-img\" src=\"" + htmlEscape(pluginLogoURL) + "\" alt=\"ZCode\">")
 	b.WriteString("<h1>ZCode 账号授权（Z.ai 官方登录）</h1>")
 	b.WriteString("</div>")
-	b.WriteString("<div class=\"desc\">通过 Z.ai 官方 OAuth 授权连接您的 ZCode 账号，授权后系统自动获取令牌并接入调度。</div>")
+	b.WriteString("<div class=\"desc\">通过 Z.ai 官方登录连接您的 ZCode 账号，授权完成后自动回调至 CPA 接收凭据（避免调起本地 ZCode 桌面端）。</div>")
 	b.WriteString("<div class=\"step-box\">")
 	b.WriteString("<strong>第 1 步：前往官方授权</strong><br>")
 	b.WriteString("点击下方按钮打开 Z.ai 授权页，使用您的手机号/微信完成登录。<br>")
@@ -519,7 +569,7 @@ func oauthBridgeFormHTML(state, authURL string) pluginapi.ManagementResponse {
 	b.WriteString("<input type=\"hidden\" name=\"state\" value=\"" + htmlEscape(state) + "\">")
 	b.WriteString("<div class=\"field\">")
 	b.WriteString("<label for=\"callback_url\"><strong>第 2 步：粘贴授权完成后的网址或授权码 (code)</strong> <span style=\"color:#ef4444\">*</span></label>")
-	b.WriteString("<textarea id=\"callback_url\" name=\"callback_url\" rows=\"4\" placeholder=\"例如: https://zcode.z.ai/app/oauth/login?redirect=...&code=xxxxxx&state=... 或直接输入 code 授权码\" required autofocus></textarea>")
+	b.WriteString("<textarea id=\"callback_url\" name=\"callback_url\" rows=\"4\" placeholder=\"例如: http://localhost:1455/auth/callback?code=xxxxxx&state=... 或直接输入 code 授权码\" required autofocus></textarea>")
 	b.WriteString("</div>")
 	b.WriteString("<div class=\"field\">")
 	b.WriteString("<label for=\"label\">账号备注 (可选)</label>")

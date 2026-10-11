@@ -41,8 +41,8 @@ func TestMain_RegistrationAndCapabilities(t *testing.T) {
 	if reg.Metadata.Name != providerName {
 		t.Fatalf("expected name %s, got %s", providerName, reg.Metadata.Name)
 	}
-	if reg.Metadata.Version != "0.1.6" {
-		t.Fatalf("expected version 0.1.6, got %s", reg.Metadata.Version)
+	if reg.Metadata.Version != "0.1.7" {
+		t.Fatalf("expected version 0.1.7, got %s", reg.Metadata.Version)
 	}
 	if !reg.Capabilities.AuthProvider {
 		t.Fatalf("expected AuthProvider capability to be true for OAuth login")
@@ -85,8 +85,8 @@ func TestMain_OAuthLoginFlow(t *testing.T) {
 	if !strings.Contains(startResp.URL, "response_type=code") {
 		t.Fatalf("expected response_type=code in auth URL, got %s", startResp.URL)
 	}
-	if !strings.Contains(startResp.URL, "zcode.z.ai%2Fapp%2Foauth%2Flogin") {
-		t.Fatalf("expected redirect_uri in auth URL, got %s", startResp.URL)
+	if !strings.Contains(startResp.URL, "localhost%3A1455%2Fauth%2Fcallback") {
+		t.Fatalf("expected CPA callback redirect_uri in auth URL, got %s", startResp.URL)
 	}
 	if !strings.Contains(startResp.URL, "state="+startResp.State) {
 		t.Fatalf("expected state in auth URL, got %s", startResp.URL)
@@ -134,7 +134,7 @@ func TestMain_OAuthLoginFlow(t *testing.T) {
 	defer func() { mockOAuthTokenURL = "" }()
 
 	// 4. 模拟在桥接页提交完整回调 URL
-	callbackURL := "https://zcode.z.ai/app/oauth/login?redirect=zcode%3A%2F%2Foauth%2Fcallback&app_version=3.15.1&code=test-auth-code-12345&state=" + startResp.State
+	callbackURL := "http://localhost:1455/auth/callback?code=test-auth-code-12345&state=" + startResp.State
 	q := url.Values{}
 	q.Set("state", startResp.State)
 	q.Set("callback_url", callbackURL)
@@ -217,8 +217,8 @@ func TestMain_OAuthBridgeReceivesHostQuery(t *testing.T) {
 
 func TestZaiOAuth_ExactUserURLMatch(t *testing.T) {
 	state := "a87957462749638ca95fb1afe0073c43"
-	got := buildZaiAuthorizeURL(state)
-	expected := "https://chat.z.ai/auth?client_id=client_P8X5CMWmlaRO9gyO-KSqtg&redirect_uri=https%3A%2F%2Fzcode.z.ai%2Fapp%2Foauth%2Flogin%3Fredirect%3Dzcode%253A%252F%252Foauth%252Fcallback%26app_version%3D3.15.1&response_type=code&state=a87957462749638ca95fb1afe0073c43"
+	got := buildZaiAuthorizeURL(state, "")
+	expected := "https://chat.z.ai/auth?client_id=client_P8X5CMWmlaRO9gyO-KSqtg&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&response_type=code&state=a87957462749638ca95fb1afe0073c43"
 
 	uGot, err1 := url.Parse(got)
 	uExp, err2 := url.Parse(expected)

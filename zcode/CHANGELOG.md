@@ -1,6 +1,15 @@
 # Changelog
 
+## [0.1.7] - 2026-10-11
+
+### Fixed
+- 修复 OAuth 授权重定向地址：将授权 URL 中的 `redirect_uri` 由桌面客户端地址（`zcode.z.ai/app/oauth/login?redirect=zcode://oauth/callback`）调整为 CPA 宿主标准回调地址（`http://localhost:1455/auth/callback` 或 `req.BaseURL`），彻底消除登录完成后调起本地 ZCode 客户端的问题，实现直接回调至 CPA 接收凭据。
+- 令牌交换兼容容错：`exchangeZaiOAuthCode` 优先使用 CPA 回调地址，同时保留备用桌面客户端地址重试兜底，并支持自适应从完整回调 URL 中解析回调基地址。
+
 ## [0.1.6] - 2026-10-11
+
+### Fixed
+- 修复 OAuth 授权重定向地址：将授权 URL 中的 `redirect_uri` 由桌面客户端地址（`zcode.z.ai/app/oauth/login?redirect=zcode://oauth/callback`）调整为 CPA 宿主标准回调地址（`http://localhost:1455/auth/callback` 或 `req.BaseURL`），彻底消除登录完成后调起本地 ZCode 客户端的问题，实现直接回调至 CPA 接收凭据。
 
 ### Performance
 - 测试探活（`/test-active`）改为流式首包即停：`active_ping.go` 的 `handleTestActiveWithAuth` 改为流式请求（`stream=true, max_tokens=1`），读取首个 512 字节数据块并校验无错误后即刻返回并异步关闭底层流，消除 `GLM-5.3` 等思考模型的完整生成等待。
