@@ -146,3 +146,51 @@ func TestGroupsAndRequestsStayAvailable(t *testing.T) {
 		t.Errorf("/requests provider column must stay populated: %+v", page.Items[0].Dimensions)
 	}
 }
+
+// TestBothDashboardVariantsDropCharts guards the two rendered dashboard variants
+// (public and full-mode) against silently surviving chart markup and against the
+// strings.Replacer patterns losing their anchors: every removed marker must be gone
+// from both variants, the kept markup must stay, and the rewritten reset-dialog
+// stripping pattern must actually have matched (otherwise the replacement silently
+// becomes a no-op and full-mode regains a stale variable declaration).
+func TestBothDashboardVariantsDropCharts(t *testing.T) {
+	variants := map[string]string{"public": dashboardHTML, "full": fullDashboardHTML}
+	gone := []string{`id="tooltip"`, `id="granularity"`, `id="barWrap"`, `id="costChart"`, `id="efficiencyChart"`,
+		`id="donut"`, `id="resetModelButton"`, `id="exportPNG"`, `<section class="visual-grid"`,
+		`<section class="advanced-grid"`, "function renderBar(", "function renderDonut(", "function renderCostTrend(",
+		"function renderEfficiency(", "function exportPNG(", "statsTrendsURL", "/stats/trends",
+		"resetDialog=document.getElementById('resetDialog')", `"trend.title"`, `"modelShare.title"`}
+	kept := []string{`id="groups"`, `id="requestRows"`, `id="totalTokens"`, "function renderGroups(", "function renderVisuals(",
+		"{key:'provider'", "backupDialog=document.getElementById('backupDialog')"}
+	// The public build strips the export script range (csvCell/exportCSV/backup) and
+	// the pricing controls by design, so those markers are asserted on full-mode only.
+	fullOnly := []string{"function exportCSV(", "function csvCell(", "function downloadBackup("}
+	for name, html := range variants {
+		if html == "" {
+			t.Fatalf("%s dashboard html is empty", name)
+		}
+		for _, marker := range gone {
+			if strings.Contains(html, marker) {
+				t.Errorf("%s variant still contains %q", name, marker)
+			}
+		}
+		for _, marker := range kept {
+			if !strings.Contains(html, marker) {
+				t.Errorf("%s variant lost %q", name, marker)
+			}
+		}
+		if name == "public" {
+			// Locks the existing split: the export script range is stripped from the
+			// public build on purpose, so full-mode is the only CSV-capable surface.
+			if strings.Contains(html, "function exportCSV(") {
+				t.Errorf("public variant unexpectedly keeps exportCSV")
+			}
+			continue
+		}
+		for _, marker := range fullOnly {
+			if !strings.Contains(html, marker) {
+				t.Errorf("%s variant lost %q", name, marker)
+			}
+		}
+	}
+}
