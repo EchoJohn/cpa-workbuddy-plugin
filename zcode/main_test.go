@@ -35,8 +35,31 @@ func TestMain_RegistrationAndCapabilities(t *testing.T) {
 	if reg.Metadata.Name != providerName {
 		t.Fatalf("expected name %s, got %s", providerName, reg.Metadata.Name)
 	}
+	if reg.Metadata.Version != "0.1.2" {
+		t.Fatalf("expected version 0.1.2, got %s", reg.Metadata.Version)
+	}
+	if reg.Capabilities.AuthProvider {
+		t.Fatalf("zcode-provider is an API-key provider and must not claim AuthProvider capability")
+	}
 	if !reg.Capabilities.ModelProvider || !reg.Capabilities.Executor || !reg.Capabilities.Scheduler || !reg.Capabilities.ManagementAPI {
 		t.Fatalf("missing required capabilities: %+v", reg.Capabilities)
+	}
+}
+
+func TestMain_AuthLoginStartNotSupported(t *testing.T) {
+	raw, err := handleMethod(pluginabi.MethodAuthLoginStart, nil)
+	if err != nil {
+		t.Fatalf("handleMethod AuthLoginStart failed: %v", err)
+	}
+	var env envelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatalf("unmarshal envelope failed: %v", err)
+	}
+	if env.OK {
+		t.Fatalf("expected not OK for AuthLoginStart")
+	}
+	if env.Error == nil || env.Error.Code != "not_supported" {
+		t.Fatalf("expected error code not_supported, got %+v", env.Error)
 	}
 }
 

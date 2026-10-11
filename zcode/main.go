@@ -67,7 +67,8 @@ const (
 )
 
 var (
-	version      = "0.1.1"
+	// version 当前插件版本号。
+	version      = "0.1.2"
 	hostAPI      *C.cliproxy_host_api
 	hostAPIMu    sync.RWMutex
 	activeConfig atomic.Value
@@ -252,7 +253,7 @@ func zcodeRegistration() registration {
 		},
 		Capabilities: registrationCapability{
 			ModelProvider:         true,
-			AuthProvider:          true,
+			AuthProvider:          false, // ZCode 为 API Key 凭据，无官方 OAuth 授权服务；关闭 AuthProvider 避免宿主误将其注册为 OAuth Provider 并报错
 			Executor:              true,
 			ExecutorModelScope:    pluginapi.ExecutorModelScopeStatic,
 			ExecutorInputFormats:  []string{"anthropic"},
@@ -307,6 +308,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 
 	case pluginabi.MethodAuthParse:
 		return handleParseAuth(request)
+
+	case pluginabi.MethodAuthLoginStart:
+		// 防御性处理：明确提示 ZCode 采用 API Key 认证，不依赖 OAuth 授权流
+		return errorEnvelope("not_supported", "zcode-provider uses BigModel API keys instead of OAuth; please manage accounts in the ZCode panel"), nil
 
 	case pluginabi.MethodExecutorIdentifier:
 		return okEnvelope(identifierResponse{Identifier: providerName})

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.2] - 2026-10-11
+
+### Fixed
+- 修正 capabilities 注册配置：将 AuthProvider 设为 false，消除在 CPA 宿主管理后台「OAuth 登录」中误暴露出 zcode-provider 卡片并在点击时报 `failed to generate authorization url` 的缺陷。
+- 为 `MethodAuthLoginStart` 补充明确的拒绝提示处理（API Key 凭据请在专属面板导入管理），避免未注册方法异常。
+
 ## [0.1.1] - 2026-10-11
 
 ### Changed
