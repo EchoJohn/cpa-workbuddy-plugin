@@ -119,7 +119,7 @@ func processAutoCheckinAccount(f pluginapi.HostAuthFileEntry, doCheckin bool) {
 		// CN: daily check-in when enabled.
 		ci, err := fetchCheckinStatus(sa)
 		if err == nil && ci != nil && ci.Active && !ci.TodayCheckedIn {
-			if _, callErr := performCheckinCall(sa); callErr == nil {
+			if _, callErr := performCheckinCall(sa, ci.CampaignID); callErr == nil {
 				// Refresh once after a successful checkin call so cache reflects
 				// the post-call state. If the status call fails keep the pre-call
 				// snapshot rather than dropping it (v0.6.31: avoid shadowing ci
@@ -217,7 +217,7 @@ func handleManualCheckin(req pluginapi.ManagementRequest) map[string]any {
 	for r := range outCh {
 		results[r.idx] = r.out
 	}
-	successN, alreadyN, failN := 0, 0, 0
+	successN, alreadyN, failN, noActivityN := 0, 0, 0, 0
 	for _, r := range results {
 		if r["error"] != nil {
 			failN++
@@ -225,6 +225,11 @@ func handleManualCheckin(req pluginapi.ManagementRequest) map[string]any {
 		}
 		if r["skipped"] == true {
 			alreadyN++
+			continue
+		}
+		if r["reason"] == "global" {
+			// 无可领取活动（活动未开放/账号不适用）不是失败，单列。
+			noActivityN++
 			continue
 		}
 		if r["success"] == true {
@@ -236,11 +241,12 @@ func handleManualCheckin(req pluginapi.ManagementRequest) map[string]any {
 	return map[string]any{
 		"results": results,
 		"summary": map[string]any{
-			"total":      len(targets),
-			"success":    successN,
-			"already":    alreadyN,
-			"fail":       failN,
-			"elapsed_ms": time.Since(t0).Milliseconds(),
+			"total":       len(targets),
+			"success":     successN,
+			"already":     alreadyN,
+			"no_activity": noActivityN,
+			"fail":        failN,
+			"elapsed_ms":  time.Since(t0).Milliseconds(),
 		},
 	}
 }
@@ -278,31 +284,33 @@ func checkinOneAccount(f pluginapi.HostAuthFileEntry) map[string]any {
 		out["total_credits"] = ci.TotalCredits
 		return out
 	}
+	if !ci.Active {
+		out["success"] = false
+		out["reason"] = "global"
+		out["message"] = "当前无可领取的签到活动"
+		return out
+	}
 
-	// Step 2: POST claim (5s budget).
-	res, err := performCheckinCall(sa)
+	// Step 2: POST campaign claim (5s budget).
+	res, err := performCheckinCall(sa, ci.CampaignID)
 	if err != nil {
 		out["error"] = "claim: " + err.Error()
 		return out
 	}
-	// QoderWork returns {"result":"ALREADY_CLAIMED"} with HTTP 409 — surface
-	// as already rather than error.
-	if result, _ := res["result"].(string); result == "ALREADY_CLAIMED" {
-		out["success"] = true
-		out["skipped"] = true
-		out["reason"] = "already"
-		out["message"] = "今日已签到"
-		if rc, ok := res["rewardCredits"].(float64); ok {
-			out["reward_credits"] = int64(rc)
-		}
-		return out
-	}
+	// claim 返回 status=CLAIMED + replayed=true 表示本轮已领过，归一为 already
+	// 而非失败。
 	if success, _ := res["success"].(bool); success {
 		out["success"] = true
+		if already, _ := res["already"].(bool); already {
+			out["skipped"] = true
+			out["reason"] = "already"
+			out["message"] = "今日已签到"
+		} else {
+			out["message"] = "签到成功"
+		}
 		if rc, ok := res["rewardCredits"].(float64); ok {
 			out["reward_credits"] = int64(rc)
 		}
-		out["message"] = "签到成功"
 		// Refresh the credits snapshot so the panel shows the post-checkin
 		// balance immediately (check-in grants new credits). Best-effort:
 		// a failure here must not flip the check-in result to error.

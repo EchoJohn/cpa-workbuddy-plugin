@@ -86,12 +86,19 @@ const (
 	endpointJobTokenExchange = upstreamBaseCN + "/api/v1/jobToken/exchange"
 	endpointJobTokenRefresh  = upstreamBaseCN + "/api/v1/jobToken/refresh"
 
-	// Business endpoints (jt- Bearer, no COSY).
-	endpointUserInfo      = upstreamBaseCN + "/api/v1/userinfo"
-	endpointQuotaUsage    = upstreamBaseCN + "/api/v2/quota/usage"
-	endpointUserPlan      = upstreamBaseCN + "/api/v2/user/plan"
-	endpointCheckinStatus = upstreamBaseCN + "/sash/api/v1/me/daily-check-in/status"
-	endpointCheckinClaim  = upstreamBaseCN + "/sash/api/v1/me/daily-check-in/claim"
+	// Business endpoints (jt-/dt- Bearer, no COSY).
+	endpointUserInfo   = upstreamBaseCN + "/api/v1/userinfo"
+	endpointQuotaUsage = upstreamBaseCN + "/api/v2/quota/usage"
+	endpointUserPlan   = upstreamBaseCN + "/api/v2/user/plan"
+
+	// CN 每日签到走 campaigns（活动）API，不再使用已废弃的
+	// /sash/api/v1/me/daily-check-in/{status,claim}（生产实测：status 恒
+	// DISABLED、claim 恒 409 AlreadyExists，永远领不到积分）。status 列出
+	// 进行中的活动，claim POST 该 CLAIM_BENEFIT 活动的 campaignId。两者都
+	// 必须带 Cosy-ClientType / User-Agent 头，否则列表被掩盖为空
+	// （见 campaignHeaders）。
+	endpointCampaigns     = upstreamBaseCN + "/sash/api/v1/me/campaigns"
+	endpointCampaignClaim = upstreamBaseCN + "/sash/api/v1/me/campaigns/" // + campaignId + "/claim"
 	endpointProUpgrade    = upstreamBaseCN + "/sash/api/v1/me/pro-upgrade/claim"
 
 	// Inference endpoints (COSY-signed + QoderEncoding body).
@@ -338,7 +345,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "0.9.26"
+var version = "0.9.27"
 
 func wbRegistration() registration {
 	return registration{

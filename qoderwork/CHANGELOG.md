@@ -1,5 +1,19 @@
 # QoderWork Plugin Changelog
 
+## 0.9.27
+
+### Fix - CN 每日签到改走 campaigns（活动）API，修复「返回刷新成功但积分不变」
+
+- 变更要点:
+  1. 根因：CN 签到误用已废弃端点 `/sash/api/v1/me/daily-check-in/{status,claim}`。生产实测（2026-10-11，账号 u09a5b6ab）：`status` 恒返回 `{"status":"DISABLED","campaignKey":"cn_daily_check_in_legacy"}`，`claim` 恒返回 HTTP 409 `AlreadyExists`，永远领不到积分；面板却显示「可签到 +100」，点击后只等到后台刷新完成，积分不变。CN 官方客户端 v0.4.4 反解与运行日志证实：签到走 campaigns API（`GET /sash/api/v1/me/campaigns` + `POST .../{campaignId}/claim`），全程无 `daily-check-in` 调用。与 qoder-ai 国际版 0.1.4 同源（国际域旧端点 404，CN 域旧端点 409）。
+  2. 端点迁移：`main.go` 新增 `endpointCampaigns` / `endpointCampaignClaim`，移除 `endpointCheckinStatus` / `endpointCheckinClaim`。
+  3. 请求头契约：新增 `campaignHeaders`（`Cosy-ClientType: 10` + `User-Agent: Qoder`）。缺这两个头时 campaigns 列表被掩盖为 `{"showCampaign":false,"claimable":false,"campaigns":[]}`（生产实测）。
+  4. 解析与领取：`fetchCheckinStatus` 改解析 campaigns 列表，用 `pickCheckinCampaign` 挑窗口内 `CLAIM_BENEFIT` 的 CREDITS 活动；`performCheckinCall(sa, campaignID)` 改 POST `.../campaigns/{campaignId}/claim`，按 `status=CLAIMED` 判成功、`replayed=true` 归一为「今日已签到」。
+  5. 签到流程：`checkin.go` 自动/手动签到均传入 `ci.CampaignID`；`ci.Active=false` 时如实返回「当前无可领取的签到活动」（reason=global），不再走必然失败的 claim。
+  6. 面板与统计：`checkinSummary` 增加 `campaign_id`；`handleManualCheckin` summary 新增 `no_activity`（无可领取活动不再计入 fail）；面板成功提示改用 `reward_credits`，文案与 qoder-ai 对齐。
+  7. 回归测试：新增 `checkin_campaigns_test.go`（端点契约、Cosy 头契约、CLAIM_BENEFIT 命中/已领取/窗口外/无活动/非 CREDITS 赠品），修复前必失败（双反证）。
+- 涉及文件: qoderwork/main.go、qoderwork/billing.go、qoderwork/checkin.go、qoderwork/management.go、qoderwork/panel.html、qoderwork/checkin_campaigns_test.go、qoderwork/VERSION
+
 ## 0.9.26
 
 ### Fix - 修复宿主桥状态码解码导致签到假成功

@@ -881,13 +881,13 @@ async function pollRefreshStatus(){
 function checkinResultToast(res, who){
   const name=res.nickname||who||"账号";
   if(res.error){toast(name+"：签到失败","err",res.error);return}
-  if(res.reason==="global"||(/国际版|不支持/.test(String(res.message||"")))){
-    toast(name+"：国际版无需签到","warn",res.message||"请用领取专家加油包");return;
+  if(res.reason==="global"){
+    toast(name+"：暂无可领取活动","warn",res.message||"当前账号无进行中的签到活动");return;
   }
   if(res.reason==="already"||(res.skipped&&/already|已签|今日/.test(String(res.message||"")))){
     toast(name+"：今日已签到","ok",res.message||"");return;
   }
-  if(res.success){toast(name+"：签到成功","ok","+"+(res.credit??res.daily_credit??"")+" 积分 · 连续 "+(res.streak_days??"?")+" 天");return}
+  if(res.success){toast(name+"：签到成功","ok","+"+(res.credit??res.daily_credit??res.reward_credits??"")+" 积分 · 连续 "+(res.streak_days??"?")+" 天");return}
   toast(name+"："+(res.message||"未知结果"),"warn");
 }
 function isCheckinDoneResult(res){
@@ -1079,11 +1079,12 @@ async function checkinAll(btn){
     const ok=Number(s.success??rs.filter(x=>x.success&&x.reason!=="already"&&!x.skipped).length)||0;
     const already=Number(s.already??rs.filter(x=>isCheckinDoneResult(x)&&(x.reason==="already"||x.skipped||!x.success)).length)||0;
     const fail=Number(s.fail??rs.filter(x=>x.error).length)||0;
-    const skippedCN=Number(s.skipped_cn||0);
+    const noActivity=Number(s.no_activity??rs.filter(x=>x.reason==="global").length)||0;
     const eligible=Number(s.eligible??(ok+fail))||0;
     const detailParts=[];
     
     if(already) detailParts.push("今日已签 "+already);
+    if(noActivity) detailParts.push("无活动 "+noActivity);
     if(eligible) detailParts.push("待签 "+eligible);
     const detail=detailParts.join(" · ");
     if(d.error){toast("批量签到失败","err",d.error)}
@@ -1092,10 +1093,12 @@ async function checkinAll(btn){
       toast("批量签到："+ok+" 成功 / "+fail+" 失败"+(already?" / "+already+" 已签":""),"err",errDetail||detail);
     }else if(ok){
       toast("批量签到："+ok+" 成功"+(already?" / "+already+" 今日已签":""),"ok",detail);
-    }else if(already||skippedCN){
-      toast("无需签到","ok",detail||"CN 今日已签");
+    }else if(already){
+      toast("无需签到","ok",detail||"今日已签");
+    }else if(noActivity){
+      toast("当前无进行中的签到活动","warn",detail);
     }else if(!rs.length && !eligible){
-      toast("没有需要签到的 CN 账号","warn",detail||"");
+      toast("没有需要签到的账号","warn",detail||"");
     }else{
       toast("没有需要签到的账号","warn",detail);
     }

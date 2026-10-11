@@ -22,57 +22,112 @@ func billingHeaders(req *http.Request, sa *storedAuth) {
 	req.Header.Set("Content-Type", "application/json")
 }
 
-// checkinStatusResponse mirrors GET /sash/api/v1/me/daily-check-in/status
-// (plain JSON, no envelope).
-type checkinStatusResponse struct {
-	Status             string `json:"status"` // CLAIMABLE | CLAIMED
-	RewardCredits      int64  `json:"rewardCredits"`
-	NextClaimAt        int64  `json:"nextClaimAt"` // s epoch
-	CurrentStreakDays  int64  `json:"currentStreakDays"`
-	TotalClaimDays     int64  `json:"totalClaimDays"`
-	TotalRewardCredits int64  `json:"totalRewardCredits"`
-	LastClaimedAt      int64  `json:"lastClaimedAt"`   // s epoch
-	RewardExpiresAt    int64  `json:"rewardExpiresAt"` // s epoch
+// campaignHeaders 在 billingHeaders 基础上补齐 CN 客户端调用 campaigns（活动）
+// API 必需的客户端头。生产实测（2026-10-11）：缺 Cosy-ClientType 时
+// /sash/api/v1/me/campaigns 会把有活动的账号掩盖为
+// {"showCampaign":false,"claimable":false,"campaigns":[]}，与 CN 官方客户端
+// v0.4.4 的请求头契约（Cosy-ClientType:10 + User-Agent:Qoder）一致。
+// [参数] req: 待发送请求；sa: 目标账号凭据。
+// [返回] 无（就地修改 req.Header）。
+// 最近修改时间：2026-10-11；改动原因：CN 签到由 daily-check-in 改走 campaigns。
+func campaignHeaders(req *http.Request, sa *storedAuth) {
+	billingHeaders(req, sa)
+	req.Header.Set("Cosy-ClientType", "10")
+	req.Header.Set("User-Agent", "Qoder")
 }
 
+// campaignStatusResponse 对应 GET /sash/api/v1/me/campaigns（plain JSON）。
+type campaignStatusResponse struct {
+	UID          string     `json:"uid"`
+	ShowCampaign bool       `json:"showCampaign"`
+	Claimable    bool       `json:"claimable"`
+	CampaignURL  string     `json:"campaignUrl"`
+	Campaigns    []campaign `json:"campaigns"`
+}
+
+type campaign struct {
+	CampaignID  string  `json:"campaignId"`
+	CampaignKey string  `json:"campaignKey"`
+	ActionType  string  `json:"actionType"`  // CLAIM_BENEFIT | VIEW_DETAILS
+	ClaimStatus string  `json:"claimStatus"` // CLAIMABLE | CLAIMED
+	StartAt     int64   `json:"startAt"`     // s epoch
+	EndAt       int64   `json:"endAt"`       // s epoch
+	Benefit     benefit `json:"benefit"`
+}
+
+type benefit struct {
+	Kind   string `json:"kind"`   // CREDITS
+	Amount int64  `json:"amount"` // 100
+}
+
+// fetchCheckinStatus 把 CN campaigns API 映射为面板的签到摘要。每日 100
+// Credits 活动是一条 CLAIM_BENEFIT 活动（campaignKey 形如
+// act-YYYYMMDD-NNN）；窗口内该活动 claimStatus=CLAIMED 即视为今日已签。
+// [参数] sa: 目标账号凭据。
+// [返回] 面板签到摘要（Active/TodayCheckedIn/CampaignID/DailyCredit 等）；上游错误。
+// 最近修改时间：2026-10-11；改动原因：CN 签到改走 campaigns（原 daily-check-in 已废弃）。
 func fetchCheckinStatus(sa *storedAuth) (*checkinSummary, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, upstreamBaseCN+"/sash/api/v1/me/daily-check-in/status", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpointCampaigns, nil)
 	if err != nil {
 		return nil, err
 	}
-	billingHeaders(req, sa)
+	campaignHeaders(req, sa)
 	resp, err := hostHTTPDo(req)
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("checkin status http %d body=%s", resp.StatusCode, truncateRedacted(string(resp.Body), 200))
+		return nil, fmt.Errorf("campaigns http %d body=%s", resp.StatusCode, truncateRedacted(string(resp.Body), 200))
 	}
-	var q checkinStatusResponse
+	var q campaignStatusResponse
 	if err := json.Unmarshal(resp.Body, &q); err != nil {
-		return nil, fmt.Errorf("checkin status parse: %w", err)
+		return nil, fmt.Errorf("campaigns parse: %w", err)
 	}
-	today := time.Now().Format("2006-01-02")
-	lastClaimed := ""
-	if q.LastClaimedAt > 0 {
-		lastClaimed = time.Unix(q.LastClaimedAt, 0).Format("2006-01-02")
-	}
+	active, todayChecked, campaignID, dailyCredit := pickCheckinCampaign(&q, time.Now())
 	sum := &checkinSummary{
-		Active:          q.Status == "CLAIMABLE" || q.Status == "CLAIMED",
-		TodayCheckedIn:  q.Status == "CLAIMED" && lastClaimed == today,
-		StreakDays:      q.CurrentStreakDays,
-		DailyCredit:     q.RewardCredits,
-		TodayCredit:     0,
-		TotalCredits:    q.TotalRewardCredits,
-		WeekCheckinDays: q.TotalClaimDays,
-		ActivityName:    "每日签到",
+		Active:         active,
+		TodayCheckedIn: todayChecked,
+		DailyCredit:    dailyCredit,
+		ActivityName:   "每日签到",
+		CampaignID:     campaignID,
 	}
-	if sum.TodayCheckedIn {
-		sum.TodayCredit = q.RewardCredits
+	if todayChecked {
+		sum.TodayCredit = dailyCredit
+		sum.StreakDays = 1
 	}
 	return sum, nil
+}
+
+// pickCheckinCampaign 从活动列表里挑出当前在 [startAt,endAt] 窗口内的
+// CLAIM_BENEFIT + CREDITS 活动，并报告其是否已领取。无此类活动（活动未开放
+// 或账号不适用）时返回 active=false。
+// [参数] q: campaigns 响应；now: 当前时间。
+// [返回] active: 是否存在可领取签到活动；todayChecked: 是否已领取；
+// campaignID: 待领取活动 id；dailyCredit: 活动赠送积分。
+// 最近修改时间：2026-10-11；改动原因：CN 签到改走 campaigns。
+func pickCheckinCampaign(q *campaignStatusResponse, now time.Time) (active, todayChecked bool, campaignID string, dailyCredit int64) {
+	ts := now.Unix()
+	for _, c := range q.Campaigns {
+		if c.ActionType != "CLAIM_BENEFIT" || c.Benefit.Kind != "CREDITS" {
+			continue
+		}
+		if c.StartAt > 0 && ts < c.StartAt {
+			continue // 窗口未开启
+		}
+		if c.EndAt > 0 && ts > c.EndAt {
+			continue // 窗口已关闭
+		}
+		active = true
+		campaignID = c.CampaignID
+		dailyCredit = c.Benefit.Amount
+		if c.ClaimStatus == "CLAIMED" {
+			todayChecked = true
+		}
+		return active, todayChecked, campaignID, dailyCredit
+	}
+	return false, false, "", 0
 }
 
 // quotaUsageResponse mirrors GET /api/v2/quota/usage response (plain JSON,
@@ -164,12 +219,19 @@ func fetchPaymentType(sa *storedAuth) string {
 	return p.UserType
 }
 
-func performCheckinCall(sa *storedAuth) (map[string]any, error) {
-	req, err := http.NewRequest(http.MethodPost, upstreamBaseCN+"/sash/api/v1/me/daily-check-in/claim", strings.NewReader("{}"))
+// performCheckinCall 调用 CN 活动领取接口（campaigns claim）。
+// [参数] sa: 目标账号凭据；campaignID: 待领取活动的 campaignId（来自 fetchCheckinStatus）。
+// [返回] 面板使用的 success 布尔语义响应 map；响应非法时返回错误。
+// 最近修改时间：2026-10-11；改动原因：CN 签到改走 campaigns claim（原 daily-check-in 恒 409 AlreadyExists）。
+func performCheckinCall(sa *storedAuth, campaignID string) (map[string]any, error) {
+	if campaignID == "" {
+		return map[string]any{"success": false, "message": "no claimable check-in campaign"}, nil
+	}
+	req, err := http.NewRequest(http.MethodPost, endpointCampaignClaim+campaignID+"/claim", strings.NewReader("{}"))
 	if err != nil {
 		return nil, err
 	}
-	billingHeaders(req, sa)
+	campaignHeaders(req, sa)
 	resp, err := hostHTTPDo(req)
 	if err != nil {
 		return map[string]any{"success": false, "message": err.Error()}, nil
@@ -181,18 +243,23 @@ func performCheckinCall(sa *storedAuth) (map[string]any, error) {
 	if err := json.Unmarshal(resp.Body, &m); err != nil {
 		return nil, err
 	}
-	// QoderWork checkin claim returns {"success":true, "rewardCredits":100,...}
-	// on success, or {"success":false,"error":"..."} on already-claimed.
-	// Normalise to the panel's expected shape (bool success).
-	// 收紧：响应缺 success 布尔字段视为契约异常（上游返回了非签到结构的载荷），
-	// 不再盲归一化为成功，避免 404/4xx 被解码为 0 时伪造「签到成功」。
-	if _, ok := m["success"]; !ok {
-		return map[string]any{
-			"success": false,
-			"message": fmt.Sprintf("unexpected checkin response: %s", truncateRedacted(string(resp.Body), 200)),
-		}, nil
+	// CN claim 返回 {"grantId":..,"status":"CLAIMED","replayed":bool,
+	// "benefit":{"kind":"CREDITS","amount":100,...},"campaignId":..}。
+	// status=CLAIMED 视为成功（replayed=true 表示本轮已领过）。
+	status, _ := m["status"].(string)
+	if status != "CLAIMED" {
+		return map[string]any{"success": false, "message": fmt.Sprintf("unexpected claim status: %v", m["status"])}, nil
 	}
-	return m, nil
+	out := map[string]any{"success": true, "result": status}
+	if b, ok := m["benefit"].(map[string]any); ok {
+		if amt, ok := b["amount"].(float64); ok {
+			out["rewardCredits"] = int64(amt)
+		}
+	}
+	if replayed, ok := m["replayed"].(bool); ok && replayed {
+		out["already"] = true
+	}
+	return out, nil
 }
 
 // isCreditsExhausted is the shared "耗尽" definition for panel + scheduler.
