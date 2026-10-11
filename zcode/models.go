@@ -187,6 +187,48 @@ func allConfiguredModels() []pluginapi.ModelInfo {
 	return result
 }
 
+// filterExcludedModels 剔除宿主 oauth-excluded-models 中为 zcode-provider 列出的模型。
+// 宿主只在 model.for_auth 的按账号注册路径上替插件过滤（sdk/cliproxy/service_executors.go
+// 的 applyExcludedModels），model.static 返回的列表会被原样登记进全局模型目录并参与
+// 路由选模（internal/pluginhost/adapters.go 的 RegisterModels 无排除调用），因此插件必须
+// 在出口自行过滤；同名裸模型被多个 OAuth 插件同时认领时，这是唯一能把模型从某个服务商
+// 摘掉的入口。
+// [参数] models: 插件已解析完成的模型列表；host: 宿主随请求传入的配置摘要。
+// [返回] 过滤后的模型列表；宿主未配置排除项时原样返回入参。
+// 最近修改时间：2026-10-12 02:05:00；改动原因：补齐 zcode 与 workbuddy/qoder-ai/qoderwork/
+// traework 一致的 oauth-excluded-models 过滤，使 GLM-5.3 这类多服务商同名模型可被定向摘除。
+func filterExcludedModels(models []pluginapi.ModelInfo, host pluginapi.HostConfigSummary) []pluginapi.ModelInfo {
+	if len(host.ExcludedModels) == 0 {
+		return models
+	}
+	excluded := host.ExcludedModels[providerName]
+	if len(excluded) == 0 {
+		for channel, list := range host.ExcludedModels {
+			if strings.EqualFold(strings.TrimSpace(channel), providerName) {
+				excluded = list
+				break
+			}
+		}
+	}
+	if len(excluded) == 0 {
+		return models
+	}
+	excludeSet := make(map[string]struct{}, len(excluded))
+	for _, m := range excluded {
+		excludeSet[strings.ToLower(strings.TrimSpace(m))] = struct{}{}
+	}
+	// 返回新切片而非 models[:0] 就地压缩：入参可能来自账号模型缓存或
+	// allConfiguredModels 的底层数组，就地写回会让缓存永久变成"已过滤列表"。
+	out := make([]pluginapi.ModelInfo, 0, len(models))
+	for _, m := range models {
+		if _, skip := excludeSet[strings.ToLower(m.ID)]; skip {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 func mappedModel(model string, cfg Config) string {
 	if upstream, exists := cfg.ModelMap[model]; exists && strings.TrimSpace(upstream) != "" {
 		return strings.TrimSpace(upstream)

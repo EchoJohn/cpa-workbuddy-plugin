@@ -282,9 +282,11 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		})
 
 	case pluginabi.MethodModelStatic:
+		var req pluginapi.StaticModelRequest
+		_ = json.Unmarshal(request, &req)
 		return okEnvelope(pluginapi.ModelResponse{
 			Provider: providerName,
-			Models:   allConfiguredModels(),
+			Models:   filterExcludedModels(allConfiguredModels(), req.Host),
 		})
 
 	case pluginabi.MethodModelForAuth:
@@ -303,7 +305,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		}
 		return okEnvelope(pluginapi.ModelResponse{
 			Provider: providerName,
-			Models:   modelInfos,
+			Models:   filterExcludedModels(modelInfos, req.Host),
 		})
 
 	case pluginabi.MethodAuthIdentifier:
