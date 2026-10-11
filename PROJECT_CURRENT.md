@@ -8,7 +8,7 @@
 
 ## 项目概况
 
-- 状态：活跃维护中。最新发布版本：traework-provider **0.2.5**（修复签到 x-device-id 拼接与尾零风控 9074 拦截 + 自动签到调度器绝对时间对齐）/ qoder-ai-provider **0.1.3** / qoderwork-provider **0.9.26** / workbuddy-provider **0.15.4** / workbuddy-ai-provider **0.1.9** / workbuddy-token-usage **0.2.4** / cursor-provider **0.1.0** / gemini-provider **0.1.1**。
+- 状态：活跃维护中。最新发布版本：traework-provider **0.2.5**（修复签到 x-device-id 拼接与尾零风控 9074 拦截 + 自动签到调度器绝对时间对齐）/ qoder-ai-provider **0.1.3** / qoderwork-provider **0.9.27**（CN 签到端点迁移 campaigns，修复「返回刷新成功但积分不变」）/ workbuddy-provider **0.15.4** / workbuddy-ai-provider **0.1.9** / workbuddy-token-usage **0.2.4** / cursor-provider **0.1.0** / gemini-provider **0.1.1**。
 - 活动工作区：F:\cpa-plugin
 - 当前时间：2026-10-11 (GMT+8)
 
