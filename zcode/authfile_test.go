@@ -242,3 +242,47 @@ func TestModelCredentialFor_Fallback(t *testing.T) {
 		t.Fatalf("expected static key, got %q", got)
 	}
 }
+
+// TestResolveUpstreamTargets_StartPlanUsesJWT 验证 start-plan（含 JWT）优先走 zcode-plan + Bearer。
+func TestResolveUpstreamTargets_StartPlanUsesJWT(t *testing.T) {
+	cfg := defaultConfig()
+	sa := &StoredAuth{APIKey: "jwt-token-x", Token: "jwt-token-x"}
+	targets := resolveUpstreamTargets(sa, cfg)
+	if len(targets) == 0 {
+		t.Fatalf("expected at least one target")
+	}
+	first := targets[0]
+	if first.URL != zaiCodingPlanBaseURL {
+		t.Fatalf("expected zcode-plan endpoint first, got %s", first.URL)
+	}
+	if !first.Bearer || first.Credential != "jwt-token-x" {
+		t.Fatalf("expected Bearer jwt credential, got %+v", first)
+	}
+}
+
+// TestResolveUpstreamTargets_ConfiguredBaseWins 验证用户显式配置 base_url 时尊重配置。
+func TestResolveUpstreamTargets_ConfiguredBaseWins(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.BaseURL = "https://custom.example.com/anthropic"
+	sa := &StoredAuth{APIKey: "static-key"}
+	targets := resolveUpstreamTargets(sa, cfg)
+	if len(targets) != 1 || targets[0].URL != "https://custom.example.com/anthropic" {
+		t.Fatalf("expected configured base only, got %+v", targets)
+	}
+	if targets[0].Bearer {
+		t.Fatalf("configured base should use x-api-key by default")
+	}
+}
+
+// TestApplyTargetAuth_BearerVsApiKey 验证两种鉴权头的互斥写入。
+func TestApplyTargetAuth_BearerVsApiKey(t *testing.T) {
+	h := http.Header{}
+	applyTargetAuth(h, upstreamTarget{Credential: "tok", Bearer: true})
+	if h.Get("Authorization") != "Bearer tok" || h.Get("x-api-key") != "" {
+		t.Fatalf("bearer auth mismatch: %+v", h)
+	}
+	applyTargetAuth(h, upstreamTarget{Credential: "key"})
+	if h.Get("x-api-key") != "key" || h.Get("Authorization") != "" {
+		t.Fatalf("api-key auth mismatch: %+v", h)
+	}
+}

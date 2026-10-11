@@ -57,19 +57,21 @@ func fetchUpstreamModels(ctx context.Context, apiKey string) ([]string, error) {
 	}
 	modelCache.RUnlock()
 
-	reqURL := cfg.BaseURL + "/v1/models"
+	targets := resolveUpstreamTargets(&StoredAuth{APIKey: apiKey}, currentConfig())
+	if len(targets) == 0 {
+		return append([]string(nil), defaultModels...), nil
+	}
+	target := targets[0]
+
+	reqURL := target.URL + "/v1/models"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return append([]string(nil), defaultModels...), err
 	}
 
-	// 统一走业务令牌解析：OAuth 账号换取 business token，静态 API Key 账号沿用自身 Key。
-	credential := modelCredentialFor(&StoredAuth{APIKey: apiKey})
-	if credential == "" {
-		credential = apiKey
-	}
-	fp := mimic.New(cfg.Mimic, keyID(credential))
-	fp.ApplyRequest(req.Header, credential, mimic.UUID4())
+	fp := mimic.New(cfg.Mimic, keyID(target.Credential))
+	fp.ApplyRequest(req.Header, target.Credential, mimic.UUID4())
+	applyTargetAuth(req.Header, target)
 
 	resp, err := modelHTTPClient.Do(req)
 	if err != nil {

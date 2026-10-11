@@ -96,17 +96,19 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 		}
 	}
 
-	// OAuth 账号须先把 zai access_token 换成业务令牌，直接使用 OAuth 令牌会被上游拒绝（401）。
-	apiKey := modelCredentialFor(sa)
-	if apiKey == "" {
+	cfg := currentConfig()
+
+	// 按账号类型选择上游端点与凭证（start-plan 走 zcode-plan + JWT，付费走 api.z.ai + 业务令牌）。
+	targets := resolveUpstreamTargets(sa, cfg)
+	if len(targets) == 0 {
 		return testActiveResponse{
 			OK:     false,
 			Status: "failed",
-			Error:  "unable to resolve upstream credential (business token exchange failed)",
+			Error:  "unable to resolve upstream credential",
 		}
 	}
+	target := targets[0]
 
-	cfg := currentConfig()
 	if strings.TrimSpace(model) == "" {
 		models := authModelsForIndex(sa.AuthID)
 		if len(models) > 0 {
@@ -128,7 +130,7 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 	}
 	payloadBytes, _ := json.Marshal(pingPayload)
 
-	reqURL := cfg.BaseURL + "/v1/messages"
+	reqURL := target.URL + "/v1/messages"
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(payloadBytes))
@@ -142,8 +144,9 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 		}
 	}
 
-	fp := mimic.New(cfg.Mimic, keyID(apiKey))
-	fp.ApplyRequest(httpReq.Header, apiKey, mimic.UUID4())
+	fp := mimic.New(cfg.Mimic, keyID(target.Credential))
+	fp.ApplyRequest(httpReq.Header, target.Credential, mimic.UUID4())
+	applyTargetAuth(httpReq.Header, target)
 
 	// 2. 发起请求并在收到首个数据块后立即异步关闭流，避免等待整段思考链完成
 	start := time.Now()

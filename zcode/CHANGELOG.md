@@ -1,13 +1,16 @@
 # Changelog
 
-## [0.1.9] - 2026-10-12
+## [0.1.10] - 2026-10-12
 
 ### Fixed
-- **修复测试模型报 `401 令牌已过期或验证不正确`**（OAuth 账号刚登录即失败）：OAuth 轮询拿到的 `zai.access_token` 是 user-service 签发的短时效令牌，**不能直接当模型 API Key 使用**。此前插件把该令牌直接作为 `x-api-key` 发往上游，必然 401。
-- **补上业务令牌（business access_token）换取链路**：新增 `business_token.go`，按官方 `zai-api` 模板（`access.type=zhipu-coding-plan-api-key`）先调 `POST https://api.z.ai/api/auth/z/login {"token": <zai access_token>}` 换取业务令牌，再以该令牌发起模型请求；带进程内缓存（默认 30 分钟）与显式失效接口。
-- **默认上游地址对齐官方模板**：`defaultBaseURL` 由 `https://open.bigmodel.cn/api/anthropic` 改为官方 `zai-api` 模板的 `https://api.z.ai/api/anthropic`。
-- 模型请求、模型发现、探活统一经 `modelCredentialFor` 解析凭证：OAuth 账号走业务令牌，静态 API Key 账号沿用自身 Key；换取失败时回退到账号自身 Key，保证存量 API Key 账号不受影响。
-- 新增 4 项回归测试（业务令牌换取与缓存、缓存失效重取、上游失败上抛、凭证回退），并经受必失败哨兵反证。
+- **修复测试模型报 `401 令牌已过期或验证不正确`**（OAuth 账号刚登录即失败）：此前插件把 OAuth 令牌直接作为 `x-api-key` 发往 `open.bigmodel.cn/api/anthropic`，与官方实际链路不符，必然 401。
+- **按账号类型路由到两条官方链路**（新增 `upstream_target.go`，2026-10-12 线上实测 + 桌面端逆向确认）：
+  - **start-plan（免费版）**：以 `zcodeJwtToken` 作 `Authorization: Bearer` 访问 `https://zcode.z.ai/api/v1/zcode-plan/anthropic`（桌面端 `resolveCurrent` 对 `planKind==="start-plan"` 即直接返回 `zcodeJwtToken`）；
+  - **付费 Coding Plan**：先调 `POST https://api.z.ai/api/auth/z/login {"token": <zai access_token>}` 换取业务令牌，再以 `x-api-key` 访问 `https://api.z.ai/api/anthropic`（对应官方 `zcode-builtin.json` 的 `zai-api` 模板 `access.type=zhipu-coding-plan-api-key`）。
+- 新增 `business_token.go`：业务令牌换取与 30 分钟进程内缓存、显式失效接口；上游成功判定兼容 `code=200` 与 `code=0`。
+- `defaultBaseURL` 对齐官方模板：`open.bigmodel.cn/api/anthropic` → `api.z.ai/api/anthropic`；用户显式配置 `base_url` 时仍尊重配置。
+- 模型请求、模型发现、探活统一经 `resolveUpstreamTargets` 解析端点与凭证，静态 API Key 账号不受影响。
+- 新增 4 项业务令牌回归测试并经受必失败哨兵反证。
 
 ## [0.1.8] - 2026-10-12
 

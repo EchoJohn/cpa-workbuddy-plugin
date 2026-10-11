@@ -196,20 +196,21 @@ func resolveTargetAuth(reqAuthID string, storageJSON []byte) *StoredAuth {
 }
 
 func prepareUpstreamRequest(ctx context.Context, payload []byte, sa *StoredAuth, cfg Config) (*http.Request, error) {
-	reqURL := cfg.BaseURL + "/v1/messages"
+	targets := resolveUpstreamTargets(sa, cfg)
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("no usable upstream credential for account %s", sa.AuthID)
+	}
+	target := targets[0]
+
+	reqURL := target.URL + "/v1/messages"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
 
-	// OAuth 账号须先把 zai access_token 换成业务令牌；静态 API Key 账号直接复用自身 Key。
-	credential := modelCredentialFor(sa)
-	if credential == "" {
-		return nil, fmt.Errorf("no usable upstream credential for account %s", sa.AuthID)
-	}
-
-	fp := mimic.New(cfg.Mimic, keyID(credential))
-	fp.ApplyRequest(httpReq.Header, credential, mimic.UUID4())
+	fp := mimic.New(cfg.Mimic, keyID(target.Credential))
+	fp.ApplyRequest(httpReq.Header, target.Credential, mimic.UUID4())
+	applyTargetAuth(httpReq.Header, target)
 	return httpReq, nil
 }
 
