@@ -432,7 +432,7 @@
       "logo": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/assets/icons/Cursor.png",
       "description": "Cursor (cursor.sh) agent-service provider for CLIProxyAPI: import Cursor session tokens (user_<id>::<jwt> or WorkosCursorSessionToken), exchange them through the OAuth token endpoint, route chat-completions to the Connect-RPC agent service with checkpoint/session continuity, image input, tool loop, and a management panel for account import/export/delete, enable/disable and per-account model controls.",
       "author": "luode0320 (ported from yobo2u/omsub cursor-plugin)",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "repository": "https://github.com/luode0320/cpa-workbuddy-plugin",
       "homepage": "https://github.com/luode0320/cpa-workbuddy-plugin/tree/main/cursor",
       "license": "MIT",
@@ -449,51 +449,51 @@
           {
             "goos": "darwin",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.2/cursor-provider_0.1.2_darwin_amd64.zip",
-            "sha256": "547b4d1b701a7bb0eccf9e955a1f8ad8b3f02af24e00f94272052bdfd72c2d39",
-            "size": 3745956
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.3/cursor-provider_0.1.3_darwin_amd64.zip",
+            "sha256": "f09dd682d26e86b0ad4de36c537f37a4fae5d4190def5d9880196ede2b96bfca",
+            "size": 3740037
           },
           {
             "goos": "darwin",
             "goarch": "arm64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.2/cursor-provider_0.1.2_darwin_arm64.zip",
-            "sha256": "109862f81c823b279a4cbffa1a5d15ef2b2e98007fac243f045c4d3cbe8ef48d",
-            "size": 3479175
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.3/cursor-provider_0.1.3_darwin_arm64.zip",
+            "sha256": "f4094e732da58fb8f0680e6bc2b304268889a8bac9794fca01af869d7b8fa460",
+            "size": 3474166
           },
           {
             "goos": "freebsd",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.2/cursor-provider_0.1.2_freebsd_amd64.zip",
-            "sha256": "c6bf30205b41b8d60be32b01447a16db092e1925798b300fa52ddb63994005c6",
-            "size": 3846916
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.3/cursor-provider_0.1.3_freebsd_amd64.zip",
+            "sha256": "0fbdde87eb3cfc53cd98659d60892318deee73e5aeff50792f80a32f4fff6a24",
+            "size": 3840591
           },
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.2/cursor-provider_0.1.2_linux_amd64.zip",
-            "sha256": "95c0aa7e14d936ad421bbbd3248029fdb585cb618c5803280d87c5dac8055c52",
-            "size": 3946540
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.3/cursor-provider_0.1.3_linux_amd64.zip",
+            "sha256": "f0ee3af32e415ec2c4b9bca0d4dd21bea0d86dd7dcb5bc6d901afdd31df6e9cb",
+            "size": 3940823
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.2/cursor-provider_0.1.2_linux_arm64.zip",
-            "sha256": "e52f69d85872d99f6eb8322a94c81a8515f44fa23a1ec7707fd8146e6e27ec5d",
-            "size": 3600432
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.3/cursor-provider_0.1.3_linux_arm64.zip",
+            "sha256": "81ec1c0a465d158736d4cc669b7bbe623ce7e889dc16f1c52f498045985666a9",
+            "size": 3596073
           },
           {
             "goos": "windows",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.2/cursor-provider_0.1.2_windows_amd64.zip",
-            "sha256": "5e4de0be0d30eb163a851fa08c0564b9f412611529a982d5726d3aacfa601491",
-            "size": 3828200
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.3/cursor-provider_0.1.3_windows_amd64.zip",
+            "sha256": "4f1873d6379659f4d0b32b17e7a2b905c8edfe964fa40710401eb4783126bc07",
+            "size": 3824027
           },
           {
             "goos": "windows",
             "goarch": "arm64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.2/cursor-provider_0.1.2_windows_arm64.zip",
-            "sha256": "638167e434c396232df49ba7754b4ddb9170a0adb6828339e20ff624725bcc44",
-            "size": 3538280
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/cursor-provider-0.1.3/cursor-provider_0.1.3_windows_arm64.zip",
+            "sha256": "ddcc6aacc40575a1cfe541fbf3bbac57c968e6ab71fae5885715948bb219fed6",
+            "size": 3532552
           }
         ]
       }
