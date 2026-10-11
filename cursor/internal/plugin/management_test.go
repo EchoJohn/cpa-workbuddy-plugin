@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -424,75 +423,26 @@ func Test_Handler_ManagementResource_serves_bilingual_shell_without_exposing_aut
 	response := result.(managementResponse)
 	require.Equal(t, 200, response.StatusCode)
 	require.Equal(t, "text/html; charset=utf-8", response.Headers.Get("content-type"))
-	require.Contains(t, string(response.Body), "Cursor 管理")
-	require.Contains(t, string(response.Body), "Cursor Management")
-	require.Contains(t, string(response.Body), `disableAll: "全部禁用"`)
-	require.Contains(t, string(response.Body), `disableAll: "Disable all"`)
-	require.Contains(t, string(response.Body), `disableAll.dataset.action = "disable-all"`)
-	require.Contains(t, string(response.Body), `saveSettings: "保存设置"`)
-	require.Contains(t, string(response.Body), `saveSettings: "Save settings"`)
-	require.Contains(t, string(response.Body), `save.dataset.action = "save-settings"`)
-	require.Contains(t, string(response.Body), `checkpointMetrics: "检查点指标"`)
-	require.Contains(t, string(response.Body), `checkpointMetrics: "Checkpoint metrics"`)
-	require.Contains(t, string(response.Body), `logicalRequestsHelp: "每\u2060次`)
-	for _, protectedTerm := range []string{
-		`检\u2060查\u2060点`,
-		`近\u2060期\u2060请\u2060求`,
-		`固\u2060定\u2060内\u2060存`,
-		`完\u2060成\u2060事\u2060件`,
-		`设\u2060计\u2060负\u2060载`,
-		`误\u2060判\u2060概\u2060率`,
-		`亿\u2060分\u2060之\u2060六`,
-		`本\u2060地\u2060终\u2060态\u2060样\u2060本`,
-		`最\u2060近\u2060结\u2060果`,
-		`实\u2060际\u2060执\u2060行\u2060次\u2060数`,
-	} {
-		require.Contains(t, string(response.Body), protectedTerm)
-	}
-	visibleBody := strings.ReplaceAll(string(response.Body), `\u2060`, "")
-	require.Contains(t, visibleBody, `近期请求 ID 使用 16 MiB 固定内存去重`)
-	require.Contains(t, visibleBody, `100 万个`)
-	require.Contains(t, string(response.Body), `logicalRequestsHelp: "At most one terminal outcome`)
-	require.Contains(t, string(response.Body), `Recent request IDs use 16 MiB fixed-memory deduplication.`)
-	require.Contains(t, string(response.Body), `false-positive probability is below 6e-8.`)
-	require.Contains(t, string(response.Body), `A false positive skips one local terminal sample`)
-	require.Contains(t, string(response.Body), `hostSchedulerMetrics: "宿主调度指标"`)
-	require.Contains(t, string(response.Body), `hostSchedulerMetrics: "Host scheduler metrics"`)
-	require.Contains(t, string(response.Body), `account.local_usage?.succeeded || 0`)
-	require.Contains(t, string(response.Body), `account.local_usage?.executor_runs || 0`)
-	require.Contains(t, string(response.Body), `account.host_runtime?.success_attempts || 0`)
-	require.Contains(t, string(response.Body), `unknown: "未知"`)
-	require.Contains(t, string(response.Body), `unknown: "Unknown"`)
-	require.Contains(t, string(response.Body), `metric(translate("cachedTokens"), translate("unknown"))`)
-	require.Contains(t, string(response.Body), `checkpoint.ttft_average_ms == null ? translate("unknown")`)
-	// 面板免密直入：密钥输入区默认隐藏；有密钥时启动直接加载状态，无密钥才显示输入区。
-	require.Contains(t, string(response.Body), `<div class="credential-grid" id="authBox" style="display:none">`)
-	require.Contains(t, string(response.Body), `function showAuth() {`)
-	require.Contains(t, string(response.Body), `function saveKey() {`)
-	require.Contains(t, string(response.Body), `authBox.style.display = "";`)
-	require.Contains(t, string(response.Body), `authBox.style.display = "none";`)
-	require.Contains(t, string(response.Body), `loadButton.addEventListener("click", () => saveKey());`)
-	require.Contains(t, string(response.Body), `if (event.key === "Enter") saveKey();`)
-	require.Contains(t, string(response.Body), `if (window.__cursorThemeSync) window.__cursorThemeSync();`)
-	require.Contains(t, string(response.Body), `if (getKey()) {`)
-	require.Contains(t, string(response.Body), `keyHelp: "未自动获取到管理密钥`)
-	require.Contains(t, string(response.Body), `keyHelp: "No management key was detected`)
-	require.NotContains(t, string(response.Body), `quotaTitle`)
-	require.NotContains(t, string(response.Body), `订阅额度说明`)
-	require.NotContains(t, string(response.Body), `panel warning`)
-	require.Contains(t, string(response.Body), `.nowrap { white-space: nowrap; }`)
-	require.Contains(t, string(response.Body), `--focus: #1d4ed8;`)
-	require.Contains(t, string(response.Body), `.models { max-height: none; overflow: visible; }`)
-	require.Contains(t, string(response.Body), `accountNotice.setAttribute("aria-live", "polite")`)
-	require.Contains(t, string(response.Body), `setAccountNoticeKey(noticeKey, { count: selected.length }, "success")`)
-	require.Contains(t, string(response.Body), `modelLegendMany: "OAuth models to disable ({count} available models)"`)
-	require.Contains(t, string(response.Body), `<select id="language"`)
-	require.Contains(t, string(response.Body), `<option value="zh-CN">中文</option>`)
-	require.Contains(t, string(response.Body), `<option value="en">English</option>`)
-	require.Contains(t, string(response.Body), "document.documentElement.lang = currentLanguage")
-	require.Contains(t, string(response.Body), `createElement("wbr")`)
-	require.NotContains(t, string(response.Body), "overflow-wrap: anywhere")
-	require.NotContains(t, string(response.Body), "access_token")
+	body := string(response.Body)
+	// 验证 WorkBuddy 统一风格的主题变量与核心标题
+	require.Contains(t, body, "<title>Cursor 面板</title>")
+	require.Contains(t, body, "Cursor 账号面板")
+	require.Contains(t, body, "--bg:#faf9f5")
+	require.Contains(t, body, "--acc:#4c8dff")
+	require.Contains(t, body, "--ok:#10b981")
+	// 验证核心工具栏按钮与操作入口
+	require.Contains(t, body, "导入 Token")
+	require.Contains(t, body, "导出凭证")
+	require.Contains(t, body, "全部启用")
+	require.Contains(t, body, "全部禁用")
+	// 面板免密直入与主题同步支持
+	require.Contains(t, body, `id="authBox"`)
+	require.Contains(t, body, `id="management-key"`)
+	require.Contains(t, body, "function showAuth()")
+	require.Contains(t, body, "function saveKey()")
+	require.Contains(t, body, "window.__cursorThemeSync")
+	// 安全断言：页面骨架不得硬编码泄露敏感 token 数据
+	require.NotContains(t, body, "access_token")
 }
 
 type fakeHostCaller struct {

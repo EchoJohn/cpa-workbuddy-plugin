@@ -1,5 +1,17 @@
 # Cursor Provider Plugin Changelog
 
+## 0.1.3
+
+### Fix - 消除侧边栏双菜单重复注册，全量对齐 WorkBuddy / ZCode 现代面板设计风格
+
+- 变更要点:
+  1. 消除侧边栏双菜单重复：收敛 `management.go` 中的 `managementRegistration().Resources` 为仅声明 `/panel` 单一菜单项，去除原本作为兼容别名重复暴露的 `/status` 资源，彻底消除宿主侧边栏出现两个并列 "Cursor" 菜单的现象；保持后端路由对 `/status`、`/enable-all`、`/disable-all` 的完整分发支持。
+  2. 面板全量对齐 WorkBuddy 风格体系：完全重构 `assets/management.html`，接入 CPA 官方 `:root` / `white` / `dark` CSS 主题变量体系（--bg:#faf9f5、--card:#ffffff、--acc:#4c8dff 等）；提供全屏 `.wrap` 规范、操作工具栏（导入、导出、全部启用、全部禁用、实时搜索、排序）、状态过滤标签（全部/可用/禁用/异常）与 `.summary` 统计概览卡片。
+  3. 卡片网格与交互组件升级：响应式 `.grid` 与 `.card` 设计，包含状态 Badge、UID/AuthID、累计调用成功/失败统计、核心模型标签列表、选模型实时推理测试弹窗、账号启用/禁用切换与右上角红叉删除二次确认；接入右上角平滑滑入的 Toast 状态通知。
+  4. 自动化测试与免密直入全绿：更新 `handler_registration_test.go` 与 `management_test.go` 单测；执行 `node test/cursor/panel_auto_entry_repro.mjs` 免密直入回归场景全断言通过；内嵌两段脚本 `node --check` 语法校验通过。
+- 验证: `python scripts/cgo-shim-build.py cursor` build/vet/test 全绿；必失败哨兵反证测试通过；`node test/cursor/panel_auto_entry_repro.mjs` 全部 100% PASS。
+- 涉及文件: cursor/VERSION、cursor/main.go、cursor/CHANGELOG.md、cursor/internal/plugin/management.go、cursor/internal/plugin/assets/management.html、cursor/internal/plugin/handler_registration_test.go、cursor/internal/plugin/management_test.go
+
 ## 0.1.2
 
 ### Feat - 对齐 WorkBuddy 核心能力：统一用量上报、JSON 备份凭据恢复与面板体验增强

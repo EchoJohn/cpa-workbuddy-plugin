@@ -14,6 +14,25 @@
 
 ## 活动会话进展摘要
 
+- 当前会话（2026-10-11）：**消除 Cursor 双菜单重复注册问题，并全量对齐 WorkBuddy / ZCode 现代面板设计风格**：
+  - 用户反馈与目标：用户指出侧边栏菜单出现 2 个 Cursor，且面板与 workbuddy 完全不是一个风格，要求再次调整。
+  - 核心排查与根因收敛：
+    1. **为什么菜单会有 2 个**：`cursor/internal/plugin/management.go` 中的 `managementRegistration()` 此前在 `Resources` 中同时注册了 `{Path: "/panel", Menu: "Cursor"}` 与 `{Path: "/status", Menu: "Cursor"}`。宿主 CLIProxyAPI 在生成侧边栏菜单时为每一个带 `Menu` 属性的 Resource 创建一个菜单条目，导致侧边栏重复渲染两个 "Cursor" 菜单项。
+    2. **面板风格不一致**：Cursor 面板原本使用的是移植初期遗留的旧版 `management.html`，缺乏 CPA Management 统一主题变量、布局结构、操作栏、状态过滤胶囊、汇总概览与现代卡片网格系统。
+  - 实施修复与全量对齐：
+    1. **消除双菜单**：修改 `cursor/internal/plugin/management.go`，将 `managementRegistration().Resources` 收敛为仅声明 `/panel` 单一菜单项，同时保持后端路由对 `/status` 兼容别名及 `/enable-all`、`/disable-all` 的完整支持；同步更新 `handler_registration_test.go` 单测断言。
+    2. **面板全量对齐 WorkBuddy / ZCode 规范**：
+       - **主题与视觉体系**：接入 CPA 官方 `:root` / `:root[data-theme="white"]` / `:root[data-theme="dark"]` CSS 变量系统与主题监听同步脚本 `__cursorThemeSync`（支持嵌入父窗口 `MutationObserver` 监听与独立深浅色模式）；
+       - **布局与工具栏**：采用 `.wrap` 规范，增加 `导入 Token`、`导出凭证`、`全部启用`、`全部禁用`、实时搜索框与排序切换按钮；
+       - **状态过滤与汇总概览**：新增「全部 / 可用 / 禁用 / 异常」状态筛选胶囊与 `.summary` 统计概览卡片；
+       - **卡片网格与交互**：现代化响应式 `.grid` 与 `.card`，展示账号名称、AuthIndex、状态 Badge、累计请求（成功/失败）、支持的核心模型标签、测试探活按钮、启用/禁用切换与右上角红叉删除确认；
+       - **弹窗与组件**：导入 Token 弹窗（支持多行输入与备份恢复）、选模型测试探活弹窗、删除二次确认弹窗与右上角滑入式 Toast 通知系统。
+  - 验证与门禁全绿：
+    - `python scripts/cgo-shim-build.py cursor`：build、vet、test 全部通过（all green）；
+    - 必失败哨兵反证测试真实进编译执行；
+    - `node test/cursor/panel_auto_entry_repro.mjs`：免密直入与各种场景全部 100% PASS；
+    - `node --check`：内嵌脚本语法校验全部通过。
+
 - 当前会话（2026-10-11）：**Cursor Provider 0.1.2 对齐 WorkBuddy 核心能力（统一用量上报、JSON 备份恢复、面板搜索与概览统计）**：
   - 用户反馈与目标：发现 Cursor 插件与 WorkBuddy 差距较大，要求同步 WorkBuddy 差距的功能，对 Cursor 插件进行系统改造。
   - 核心实施与同步对齐：
@@ -21,6 +40,16 @@
     2. **备份 JSON 凭据恢复导入**：增强 `cursor/internal/plugin/import.go` 的 `importBackupJSON`，智能识别完整备份导出的 JSON（以及单/数组凭据），一键批量恢复账号，与导出功能形成闭环。
     3. **面板体验全面升级**：在 `management.html` 顶部增加账号状态概览统计条（总数、活跃、禁用、可用模型），操作栏增加实时模糊搜索过滤输入框，导入弹窗新增从备份恢复独立区域。
   - 验证与门禁全绿：`python scripts/cgo-shim-build.py cursor` 与 `token-usage-tracker` 全绿；必失败哨兵反证测试真实执行；`node test/cursor/panel_auto_entry_repro.mjs` 11 项断言全通过；`node --check` 语法检查全部通过；6-review 风格回归 `STYLE: PASS`。
+
+- 当前会话（2026-10-11）：**兄弟插件同步 workbuddy 路由能力（批次 A 至 D 全量本地实施收口，严格无提交无发布）**：
+  - 用户目标：按顺序推进兄弟插件同步 workbuddy 路由能力，直到全部完成，先在本地全部完成，不提交、不发布。
+  - 核心实施与全批次收口：
+    1. **批次 A（traework 默认会话路由与配置动态联动修复）**：`scheduler_mode` 默认值与描述从 `off` 改为 `session`，并在 `config.go:175` 补齐 `setSchedulerMode(v)` 彻底打通配置与调度器状态脱钩，新增 `TestSchedulerMode_DefaultIsSession` 单测锁定。
+    2. **批次 B（workbuddy-ai 补齐路由回归单测资产）**：为 `workbuddy-ai` 移植并补充 `scheduler_test.go`、`session_auth_test.go`、`routing_exclusion_test.go`、`failover_retry_test.go`、`accountFailover_test.go`，消除未测试盲区。
+    3. **批次 C（qoderwork 深度路由改造）**：原位精简 `watchdogLoop`（移除保号池翻转，保留 10m 计数落盘与清扫驱动）；移植 `test_failed_tag.go` 并在 `active_ping.go` 补齐打标清标；`scheduler.go` 引入硬排除、低积分优先排序与全灭 defer；彻底移除 `preserve.go` 及相关引用；面板三文件接入 `test_failed` 并移除保号 UI；补齐单测全绿。
+    4. **批次 D（qoder-ai 镜像结构改造与低积分选卡）**：镜像批次 C 成熟改法，并在 `active_auth.go` 补齐原计划独缺的 `accountLowerCredits` 与 `ensureDefaultActiveAuth` 低积分选卡逻辑，彻底卸载 `preserve.go` 并补齐单测。
+  - 验证证据与门禁全绿：五插件（traework、workbuddy-ai、qoderwork、qoder-ai 及基线 workbuddy）本地 `cgo-shim-build.py` build/vet/test 全部通过，必失败哨兵反证全部通过，`node` 脚本对 panel.html 语法校验全绿，归档 6-review 风格回归报告 `doc/6-review/2026-10-11_041000_兄弟插件同步workbuddy路由能力全量收口_6-review.md`（STYLE: PASS）。
+  - 本地保护：严格执行用户当轮显式约束，零提交、零推送、零发布，全部修改完整安全保留在工作区。
 
 - 当前会话（2026-10-11）：**自动探活多模型轮测实施收口（v1.1 completed）与下一阶段兄弟插件路由能力同步推进**：
   - 实施计划收口：正式更新《自动测试多模型依次探活改造实施总览》（`doc/3-实施/2026-10-09_233000_自动测试多模型依次探活改造_实施总览.md`）为完成态（`status: completed`，`version: v1.1`），TASK-001 至 TASK-005 全部勾选完成，对齐 `doc/6-review/2026-10-09_234800_自动测试多模型依次探活改造_6-review.md`（STYLE: PASS）。

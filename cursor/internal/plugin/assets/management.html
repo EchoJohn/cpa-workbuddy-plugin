@@ -1,1328 +1,883 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Cursor 插件状态、本地估算用量与模型禁用管理。">
-  <title>Cursor 管理</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --canvas: #f5f7fa;
-      --surface: #ffffff;
-      --surface-muted: #f0f3f7;
-      --text: #17202a;
-      --muted: #657080;
-      --border: #d8dee8;
-      --accent: #2563eb;
-      --accent-hover: #1d4ed8;
-      --accent-contrast: #ffffff;
-      --success: #18794e;
-      --warning: #9a6700;
-      --danger: #b42318;
-      --focus: #1d4ed8;
-      --shadow: 0 8px 24px rgba(23, 32, 42, .08);
-      --space-1: 4px;
-      --space-2: 8px;
-      --space-3: 12px;
-      --space-4: 16px;
-      --space-6: 24px;
-      --space-8: 32px;
-      --space-16: 64px;
-      --radius-sm: 8px;
-      --radius-md: 12px;
-      --radius-pill: 999px;
-      --border-width: 1px;
-      --control-size: 44px;
-      --font-xs: 13px;
-      --font-lg: 18px;
-      --font-section: 20px;
-      --font-title-min: 28px;
-      --font-title-max: 40px;
-      --weight-label: 650;
-      --weight-action: 700;
-      --content-width: 960px;
-      --model-cell-width: 220px;
-      --model-list-height: 360px;
-      --focus-width: 3px;
-      --focus-offset: 2px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cursor 面板</title>
+<style>
+/* Theme tokens aligned with CPA management panel (key-policy / themes.scss):
+   default :root = light (paper); data-theme=white | dark; embedded iframe syncs parent. */
+:root{
+  --bg:#faf9f5;--card:#ffffff;--border:#e3e1db;--fg:#2d2a26;--mut:#6d6760;
+  --acc:#4c8dff;--on-acc:#ffffff;--ok:#10b981;--warn:#e0aa14;--err:#c65746;
+  --surface:#f0eee8;--surface-muted:#e9e6df;--btn-sec:#eef1f6;--btn-sec-hover:#e4e8ef;
+  --input-bg:#ffffff;--code-bg:#f3f4f6;--code-fg:#374151;--placeholder:rgba(109,103,96,.55);
+  --ok-soft:rgba(16,185,129,.10);--ok-border:rgba(16,185,129,.30);
+  --warn-soft:rgba(224,170,20,.12);--warn-border:rgba(224,170,20,.32);
+  --err-soft:rgba(198,87,70,.10);--err-border:rgba(198,87,70,.30);
+  --mut-soft:rgba(109,103,96,.12);--mut-border:rgba(109,103,96,.28);
+  --scrim:rgba(45,42,38,.35);--toast-shadow:0 10px 28px rgba(0,0,0,.12),0 0 0 1px rgba(0,0,0,.04);
+  --modal-shadow:0 24px 56px rgba(0,0,0,.18),0 0 0 1px rgba(0,0,0,.04);
+  --acc-ring:rgba(76,141,255,.18);--radius-md:12px;--radius-lg:16px;
+  color-scheme:light
+}
+:root[data-theme="white"]{
+  --bg:#f5f5f5;--card:#ffffff;--border:#e6e6e6;--fg:#1f1f1f;--mut:#707070;
+  --surface:#fafafa;--surface-muted:#efefef;--btn-sec:#f0f0f0;--btn-sec-hover:#e8e8e8;
+  --input-bg:#ffffff;--code-bg:#f3f4f6;--code-fg:#374151;--placeholder:rgba(112,112,112,.55);
+  --scrim:rgba(0,0,0,.32);--toast-shadow:0 10px 28px rgba(0,0,0,.10),0 0 0 1px rgba(0,0,0,.04);
+  --modal-shadow:0 24px 56px rgba(0,0,0,.16),0 0 0 1px rgba(0,0,0,.04);
+  color-scheme:light
+}
+:root[data-theme="dark"]{
+  --bg:#1e1d1b;--card:#26241f;--border:#3a3833;--fg:#ede9e3;--mut:#9a948c;
+  --acc:#4c8dff;--on-acc:#ffffff;--ok:#34d399;--warn:#f0c050;--err:#e07a6a;
+  --surface:#2f2d28;--surface-muted:#35332e;--btn-sec:#35332e;--btn-sec-hover:#3f3c36;
+  --input-bg:#1e1d1b;--code-bg:#35332e;--code-fg:#d6d1c9;--placeholder:rgba(154,148,140,.55);
+  --ok-soft:rgba(52,211,153,.12);--ok-border:rgba(52,211,153,.38);
+  --warn-soft:rgba(240,192,80,.14);--warn-border:rgba(240,192,80,.38);
+  --err-soft:rgba(224,122,106,.12);--err-border:rgba(224,122,106,.38);
+  --mut-soft:rgba(154,148,140,.16);--mut-border:rgba(154,148,140,.32);
+  --scrim:rgba(0,0,0,.55);--toast-shadow:0 10px 28px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.03);
+  --modal-shadow:0 24px 56px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.04);
+  --acc-ring:rgba(76,141,255,.28);
+  color-scheme:dark
+}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1400px;margin:0 auto;padding:24px 20px}
+h1{font-size:20px;margin:0 0 4px}.sub{color:var(--mut);font-size:13px;margin-bottom:20px}
+.bar{display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+button{background:var(--acc);color:var(--on-acc);border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px}
+button.sec{background:var(--btn-sec);color:var(--fg)}button.sec:hover{background:var(--btn-sec-hover)}button:disabled{opacity:.5;cursor:default}
+.toggle{display:flex;gap:8px;align-items:center;color:var(--mut);font-size:13px}
+/* Toolbar search + sort */
+.bar .search{max-width:210px;flex:0 1 210px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:7px 12px;color:var(--fg);font-size:13px;outline:none}
+.bar .search:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
+.bar .search::placeholder{color:var(--placeholder)}
+.bar .sort-btn{font-size:13px;white-space:nowrap}
+.bar .sort-btn.active{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
+.grid{display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:16px}
+.card,.summary{background:var(--card);border:1px solid var(--border);border-radius:12px}
+.card{padding:16px}
+.card h2{font-size:15px;margin:0 0 2px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.card h2 .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.uid{color:var(--mut);font-size:11px;font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:12px}
+.badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:99px;background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border)}
+.badge.disabled{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
+.badge.cooling{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
+.badge.test-failed{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border);font-style:italic}
+.filter-bar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.ftag{background:var(--surface);border:1px solid var(--border);color:var(--mut);border-radius:99px;padding:5px 14px;font-size:12px;cursor:pointer;font-weight:600}
+.ftag.active{background:var(--acc);color:var(--on-acc);border-color:var(--acc)}
+.ftag .cnt{font-size:10px;opacity:.75;margin-left:4px}
+/* 用量汇总与账号卡共用 --card，避免夜间两套底色 */
+.summary{padding:16px;margin-bottom:14px}
+.summary-hd{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.summary-title{font-weight:700;font-size:14px}
+.summary-meta{color:var(--mut);font-size:12px}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:10px}
+.summary-item{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.summary-item .k{color:var(--mut);font-size:11px;margin-bottom:4px}
+.summary-item .v{font-size:18px;font-weight:700}
+.summary-item .v.ok{color:var(--ok)}
+.summary-item .v.muted{color:var(--mut);font-weight:600}
+.summary-item .v.warn{color:var(--warn)}
+.summary-item .v.err{color:var(--err)}
+.row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-top:1px dashed var(--border)}
+.row:first-of-type{border-top:0}.k{color:var(--mut)}.v{font-weight:600}.v.mono{font-family:ui-monospace,monospace;font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.v.ok{color:var(--ok)}.v.warn{color:var(--warn)}.v.err{color:var(--err)}
+.models{margin-top:10px;font-size:12px;color:var(--mut);display:flex;flex-wrap:wrap;gap:6px}
+.model-tag{background:var(--mut-soft);border:1px solid var(--mut-border);color:var(--mut);border-radius:6px;padding:2px 8px;font-size:11px;font-family:ui-monospace,monospace}
+.actions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+.field-input{flex:1;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--fg);outline:none}
+.field-input:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
+/* 右上角滑入通知栈 */
+.toasts{position:fixed;top:16px;right:16px;display:flex;flex-direction:column;gap:10px;z-index:9999;max-width:360px}
+.toast{background:var(--card);border:1px solid var(--border);border-left:4px solid var(--acc);border-radius:var(--radius-md);padding:14px 18px;font-size:13px;box-shadow:var(--toast-shadow);transform:translateX(120%);opacity:0;transition:transform .3s cubic-bezier(.2,.9,.3,1.1),opacity .25s;cursor:pointer;word-break:break-all}
+.toast.show{transform:translateX(0);opacity:1}
+.toast.ok{border-left-color:var(--ok);background:var(--ok-soft)}
+.toast.warn{border-left-color:var(--warn);background:var(--warn-soft)}
+.toast.err{border-left-color:var(--err);background:var(--err-soft)}
+.toast .t{font-weight:600;margin-bottom:3px}
+.toast .d{color:var(--mut);font-size:12px;line-height:1.45}
+button.done{background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border);cursor:default;opacity:1}
+button.done:disabled{opacity:1}
+button.danger{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
+button.danger:hover{background:var(--err);color:#fff}
+/* 账号卡右上角删除入口：独立于普通 action，hover 转红提示危险操作 */
+.card-del{background:transparent;color:var(--mut);border:0;padding:2px 7px;font-size:16px;line-height:1;border-radius:6px;cursor:pointer;flex:none}
+.card-del:hover{background:var(--err-soft);color:var(--err)}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--on-acc);border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+button .spin{border-color:var(--on-acc);border-top-color:transparent}
+.loading{color:var(--mut);text-align:center;padding:40px}
+.modal-mask{position:fixed;inset:0;background:var(--scrim);display:none;align-items:center;justify-content:center;z-index:9000;padding:16px;backdrop-filter:blur(2px)}
+.modal-mask.show{display:flex}
+.modal{background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius-lg);width:min(560px,100%);max-height:min(90vh,640px);display:flex;flex-direction:column;box-shadow:var(--modal-shadow)}
+.modal-hd{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border)}
+.modal-hd h2{font-size:15px;margin:0;color:var(--fg);font-weight:600}
+.modal-x{background:transparent;color:var(--mut);padding:4px 10px;font-size:18px;line-height:1}
+.modal-x:hover{color:var(--fg);background:var(--surface-muted)}
+.modal-bd{padding:16px;overflow:auto}
+.modal-bd .hint{color:var(--mut);font-size:12px;margin:0 0 10px;line-height:1.5}
+.modal-bd .hint code{background:var(--code-bg);color:var(--code-fg);padding:1px 5px;border-radius:4px;font-size:11px}
+.modal-bd textarea{width:100%;min-height:140px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--fg);font:12px/1.45 ui-monospace,monospace;resize:vertical;outline:none}
+.modal-bd textarea:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
+.modal-bd textarea::placeholder{color:var(--placeholder)}
+.modal-ft{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--surface);border-radius:0 0 var(--radius-lg) var(--radius-lg)}
+.modal-ft button.sec{background:var(--btn-sec);color:var(--fg)}
+.modal-ft button.sec:hover{background:var(--btn-sec-hover)}
+.model-list{display:flex;flex-direction:column;gap:6px;max-height:280px;overflow:auto;border:1px dashed var(--border);border-radius:8px;padding:6px}
+.model-item{display:block;width:100%;text-align:left;background:var(--btn-sec);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;font-family:ui-monospace,monospace;cursor:pointer;word-break:break-all}
+.model-item:hover{background:var(--btn-sec-hover);border-color:var(--acc)}
+.model-item:disabled{opacity:.5;cursor:default}
+.import-result{margin-top:12px;border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;max-height:160px;overflow:auto;display:none}
+.import-result.show{display:block}
+.import-result .r-hd{font-weight:600;margin-bottom:6px}
+.import-result .r-hd.ok{color:var(--ok)}.import-result .r-hd.err{color:var(--err)}
+@media (max-width: 1024px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .grid { grid-template-columns: 1fr; }
+  .wrap { padding: 16px 12px; }
+  .bar .search { max-width: 100%; flex: 1 1 100%; }
+}
+</style>
+<script>
+/* Early theme sync (before body paint): mirror CPA parent data-theme when
+   embedded; standalone falls back to prefers-color-scheme. Same semantics as
+   cpa-plugin-key-policy themeSync (DOM data-theme is source of truth). */
+(function(){
+  var ATTR="data-theme";
+  function embedded(){try{return window.self!==window.top}catch(e){return false}}
+  function apply(t){
+    var el=document.documentElement;
+    if(t==="white"||t==="dark")el.setAttribute(ATTR,t);
+    else el.removeAttribute(ATTR);
+  }
+  function parentTheme(){
+    if(!embedded())return null;
+    try{
+      var raw=window.parent.document.documentElement.getAttribute(ATTR);
+      if(raw==="white"||raw==="dark")return raw;
+      return "light";
+    }catch(e){return null}
+  }
+  function systemTheme(){
+    try{return window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}catch(e){return "light"}
+  }
+  function sync(){apply(parentTheme()||systemTheme())}
+  sync();
+  window.__cursorThemeSync=function(){
+    sync();
+    if(!embedded()){
+      try{
+        var mq=window.matchMedia("(prefers-color-scheme: dark)");
+        var on=function(){sync()};
+        if(mq.addEventListener)mq.addEventListener("change",on);
+        else if(mq.addListener)mq.addListener(on);
+      }catch(e){}
+      return;
     }
-    :root[data-theme="dark"] {
-      color-scheme: dark;
-      --canvas: #0f141b;
-      --surface: #171e27;
-      --surface-muted: #202936;
-      --text: #edf2f7;
-      --muted: #a9b4c2;
-      --border: #344150;
-      --accent: #6ea8fe;
-      --accent-hover: #8abbff;
-      --accent-contrast: #08111f;
-      --success: #63d6a2;
-      --warning: #f5c451;
-      --danger: #ff8a80;
-      --focus: #93c5fd;
-      --shadow: 0 8px 24px rgba(0, 0, 0, .28);
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: var(--canvas); color: var(--text); line-height: 1.55; }
-    main { width: min(var(--content-width), calc(100% - var(--space-8))); margin: 0 auto; padding: var(--space-8) 0 var(--space-16); }
-    h1, h2, h3 { margin: 0; letter-spacing: -.02em; }
-    h1 { font-size: clamp(var(--font-title-min), 5vw, var(--font-title-max)); line-height: 1.15; }
-    h2 { font-size: var(--font-section); }
-    h3 { font-size: var(--font-lg); }
-    p { margin: var(--space-2) 0 0; }
-    .muted { color: var(--muted); }
-    .stack { display: grid; gap: var(--space-4); }
-    .header { margin-bottom: var(--space-6); }
-    .header-row { display: flex; justify-content: space-between; gap: var(--space-4); align-items: start; }
-    .language-field { display: grid; gap: var(--space-1); min-width: 132px; }
-    .language-field label { color: var(--muted); font-size: var(--font-xs); }
-    .panel { padding: var(--space-6); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
-    .credential-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); align-items: start; }
-    .load-action { padding-top: var(--space-8); }
-    .nowrap { white-space: nowrap; }
-    label, legend { font-weight: var(--weight-label); }
-    select { min-height: var(--control-size); padding: var(--space-2) var(--space-3); color: var(--text); background: var(--surface); border: var(--border-width) solid var(--border); border-radius: var(--radius-sm); font: inherit; }
-    input[type="password"] { width: 100%; min-height: var(--control-size); margin-top: var(--space-2); padding: var(--space-2) var(--space-3); color: var(--text); background: var(--surface-muted); border: var(--border-width) solid var(--border); border-radius: var(--radius-sm); font: inherit; }
-    button { min-height: var(--control-size); padding: var(--space-2) var(--space-4); border: var(--border-width) solid transparent; border-radius: var(--radius-sm); font: inherit; font-weight: var(--weight-action); cursor: pointer; }
-    button.primary { color: var(--accent-contrast); background: var(--accent); }
-    button.primary:hover { background: var(--accent-hover); }
-    button.secondary { color: var(--text); background: var(--surface-muted); border-color: var(--border); }
-    button:disabled { cursor: wait; opacity: .62; }
-    button:focus-visible, input:focus-visible, select:focus-visible, .model:focus-within { outline: var(--focus-width) solid var(--focus); outline-offset: var(--focus-offset); }
-    .notice { min-height: var(--space-6); margin-top: var(--space-3); color: var(--muted); }
-    .notice.error { color: var(--danger); }
-    .notice.success { color: var(--success); }
-    .account { box-shadow: var(--shadow); }
-    .account-head { display: flex; justify-content: space-between; gap: var(--space-3); align-items: start; }
-    .pill { display: inline-flex; align-self: start; width: max-content; padding: var(--space-1) var(--space-2); color: var(--success); background: var(--surface-muted); border-radius: var(--radius-pill); font-size: var(--font-xs); font-weight: var(--weight-action); }
-    .pill[data-status="error"], .pill[data-status="unavailable"] { color: var(--danger); }
-    .pill[data-status="disabled"], .pill[data-status="inactive"] { color: var(--muted); }
-    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); margin-top: var(--space-4); }
-
-    .metric-section { margin-top: var(--space-6); }
-    .metric { padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-muted); }
-    .metric span { display: block; color: var(--muted); font-size: var(--font-xs); }
-    .metric strong { display: block; margin-top: var(--space-1); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--font-lg); }
-    fieldset { min-width: 0; margin: var(--space-6) 0 0; padding: 0; border: 0; }
-    .models { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--model-cell-width), 100%), 1fr)); gap: var(--space-2); margin-top: var(--space-3); max-height: var(--model-list-height); overflow: auto; }
-    .model { display: flex; gap: var(--space-3); align-items: start; min-height: var(--control-size); padding: var(--space-3); border: var(--border-width) solid var(--border); border-radius: var(--radius-sm); background: var(--surface-muted); }
-    .model input { margin-top: var(--space-1); }
-    .model code { min-width: 0; overflow-wrap: normal; word-break: normal; font-size: var(--font-xs); }
-    .account-notice { margin-bottom: 0; text-align: right; }
-    .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
-    .empty { padding: var(--space-6); text-align: center; color: var(--muted); }
-    @media (max-width: 720px) {
-      main { width: min(100% - var(--space-6), var(--content-width)); padding-top: var(--space-6); }
-      .credential-grid, .metrics { grid-template-columns: 1fr; }
-      .load-action { padding-top: 0; }
-      .credential-grid button { width: 100%; }
-      .header-row, .account-head { display: grid; }
-      .language-field { width: 100%; }
-      .models { max-height: none; overflow: visible; }
-      .account-notice { text-align: left; }
-      .actions button { width: 100%; }
-    }
-    .bar { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
-    .modal-mask { position: fixed; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center; padding: var(--space-4); background: rgba(15, 20, 27, .55); }
-    .modal-mask.show { display: flex; }
-    .modal { width: min(560px, 100%); max-height: 86vh; overflow: auto; background: var(--surface); border: var(--border-width) solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow); }
-    .modal-hd, .modal-ft { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-4) var(--space-6); }
-    .modal-hd { justify-content: space-between; border-bottom: var(--border-width) solid var(--border); }
-    .modal-ft { justify-content: flex-end; border-top: var(--border-width) solid var(--border); }
-    .modal-bd { display: grid; gap: var(--space-3); padding: var(--space-6); }
-    .modal-x { min-height: auto; padding: var(--space-1) var(--space-2); color: var(--muted); background: transparent; font-size: var(--font-lg); }
-    textarea { width: 100%; min-height: 132px; padding: var(--space-3); color: var(--text); background: var(--surface-muted); border: var(--border-width) solid var(--border); border-radius: var(--radius-sm); font: inherit; resize: vertical; }
-    .hint { color: var(--muted); font-size: var(--font-xs); }
-    .file-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
-    .file-info { color: var(--muted); font-size: var(--font-xs); }
-    .file-info.bad { color: var(--danger); }
-    .file-list { display: none; gap: var(--space-1); }
-    .file-list.show { display: grid; }
-    .file-item, .r-item { display: flex; justify-content: space-between; gap: var(--space-2); font-size: var(--font-xs); }
-    .import-result { display: none; }
-    .import-result.show { display: grid; gap: var(--space-1); }
-    .r-hd { font-size: var(--font-xs); font-weight: var(--weight-label); }
-    .r-hd.err { color: var(--danger); }
-    .r-err { color: var(--danger); }
-    .toasts { position: fixed; top: var(--space-4); right: var(--space-4); z-index: 60; display: grid; gap: var(--space-2); max-width: min(360px, calc(100% - var(--space-8))); }
-    .toast { padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-sm); background: var(--surface); box-shadow: var(--shadow); opacity: 0; transform: translateY(-6px); transition: opacity .18s ease, transform .18s ease; cursor: pointer; }
-    .toast.show { opacity: 1; transform: translateY(0); }
-    .toast.ok { border-left-color: var(--success); }
-    .toast.warn { border-left-color: var(--warning); }
-    .toast.err { border-left-color: var(--danger); }
-    .toast .t { font-weight: var(--weight-label); }
-    .toast .d { margin-top: var(--space-1); color: var(--muted); font-size: var(--font-xs); word-break: break-word; }
-    .spin { display: inline-block; width: 12px; height: 12px; margin-right: var(--space-1); border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .card-del { min-height: auto; padding: 0 var(--space-2); color: var(--muted); background: transparent; font-size: var(--font-lg); }
-    .card-del:hover { color: var(--danger); }
-    .header-title { display: flex; align-items: center; gap: var(--space-3); }
-    .header-logo { width: 36px; height: 36px; border-radius: var(--radius-sm); object-fit: contain; background: #000; display: block; }
-    .model-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--space-2); margin-top: var(--space-3); max-height: 240px; overflow-y: auto; }
-    .model-item { font-family: ui-monospace, monospace; font-size: var(--font-xs); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); cursor: pointer; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: all .15s ease; }
-    .model-item:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--surface-muted); }
-    .model-item:disabled { opacity: .5; cursor: not-allowed; }
-    .import-result { margin-top: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); font-size: var(--font-xs); background: var(--surface-muted); border: 1px solid var(--border); display: none; }
-    .import-result.show { display: block; }
-    .r-hd { font-weight: 600; margin-bottom: var(--space-1); }
-    .r-hd.ok { color: var(--success); }
-    .r-hd.err { color: var(--danger); }
-    .r-item { display: flex; justify-content: space-between; gap: var(--space-2); word-break: break-all; }
-    .r-err { color: var(--danger); }
-  </style>
-  <script>
-    /* 主题同步：嵌入主面板时镜像 data-theme，独立打开时跟随系统深浅色。 */
-    (() => {
-      const ATTR = "data-theme";
-      const embedded = () => { try { return window.self !== window.top; } catch (_) { return false; } };
-      const apply = (theme) => {
-        const el = document.documentElement;
-        if (theme === "white" || theme === "dark") el.setAttribute(ATTR, theme);
-        else el.removeAttribute(ATTR);
-      };
-      const parentTheme = () => {
-        if (!embedded()) return null;
-        try {
-          const raw = window.parent.document.documentElement.getAttribute(ATTR);
-          if (raw === "white" || raw === "dark") return raw;
-          return "light";
-        } catch (_) { return null; }
-      };
-      const systemTheme = () => {
-        try { return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch (_) { return "light"; }
-      };
-      const sync = () => apply(parentTheme() || systemTheme());
-      sync();
-      /* 启动主题 watcher：嵌入时观察父页主题变化，独立打开时监听系统深浅色切换。 */
-      window.__cursorThemeSync = () => {
-        sync();
-        if (!embedded()) {
-          try {
-            const mq = window.matchMedia("(prefers-color-scheme: dark)");
-            const onSystemChange = () => sync();
-            if (mq.addEventListener) mq.addEventListener("change", onSystemChange);
-            else if (mq.addListener) mq.addListener(onSystemChange);
-          } catch (_) { /* ignore */ }
-          return;
-        }
-        try {
-          const onParentChange = () => sync();
-          new MutationObserver(onParentChange).observe(window.parent.document.documentElement, { attributes: true, attributeFilter: [ATTR] });
-          const onStorageChange = (event) => { if (event.key === "cli-proxy-theme") sync(); };
-          window.addEventListener("storage", onStorageChange);
-        } catch (_) { /* ignore */ }
-      };
-    })();
-  </script>
+    try{
+      var parentEl=window.parent.document.documentElement;
+      new MutationObserver(sync).observe(parentEl,{attributes:true,attributeFilter:[ATTR]});
+      window.addEventListener("storage",function(e){if(e.key==="cli-proxy-theme")sync()});
+    }catch(e){}
+  };
+})();
+</script>
 </head>
 <body>
-  <main>
-    <header class="header">
-      <div class="header-row">
-        <div class="header-title">
-          <img class="header-logo" src="https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/assets/icons/Cursor.png" alt="Cursor Logo">
-          <h1 data-i18n="pageTitle">Cursor 管理</h1>
-        </div>
-        <div class="language-field">
-          <label for="language" data-i18n="languageLabel">语言</label>
-          <select id="language">
-            <option value="zh-CN">中文</option>
-            <option value="en">English</option>
-          </select>
-        </div>
-      </div>
-      <p class="muted"><span data-i18n="headerPrefix">由 Cursor 插件直接提供，不依赖</span> <span class="nowrap">CPA Manager Plus</span> <span data-i18n="headerJoin">或</span> <span class="nowrap">CLIProxyAPI</span> <span data-i18n="headerSuffix">前端改造。</span></p>
-    </header>
-    <section class="panel" aria-labelledby="credential-title">
-      <div class="credential-grid" id="authBox" style="display:none">
-        <div>
-          <label id="credential-title" for="management-key"><span class="nowrap">CLIProxyAPI</span> <span data-i18n="managementKeyLabel">管理密钥</span></label>
-          <input id="management-key" type="password" autocomplete="off" spellcheck="false" aria-describedby="key-help">
-          <p id="key-help" class="muted" data-i18n="keyHelp">未自动获取到管理密钥，请手动输入；密钥仅保留在当前标签页会话。</p>
-        </div>
-        <div class="load-action"><button id="load" class="primary" type="button" data-i18n="loadStatus">加载状态</button></div>
-      </div>
-      <div id="summaryBox" style="display:none;margin-bottom:var(--space-3);padding:var(--space-2) var(--space-4);border-radius:var(--radius-sm);background:var(--surface-muted);border:1px solid var(--border);font-size:var(--font-xs);color:var(--muted);align-items:center;justify-content:space-between"></div>
-      <div class="bar">
-        <button id="importBtn" class="secondary" type="button" data-i18n="importCredential">导入 Token</button>
-        <button id="exportBtn" class="secondary" type="button" data-i18n="exportCredential">导出凭证</button>
-        <button id="enableAllBtn" class="secondary" type="button" data-i18n="enableAll">全部启用</button>
-        <button id="disableAllBtn" class="secondary" type="button" data-i18n="disableAllAccounts">全部禁用</button>
-        <div style="flex:1"></div>
-        <input id="searchInput" type="search" placeholder="搜索账号 / 标识 / 邮箱..." data-i18n-placeholder="searchPlaceholder" style="min-width:200px;padding:var(--space-2) var(--space-3);font-size:var(--font-xs);border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)">
-      </div>
-      <div id="notice" class="notice" role="status" aria-live="polite"></div>
-    </section>
-    <div id="accounts" class="stack" aria-live="polite"></div>
-  </main>
-  <div class="modal-mask" id="importModal" onclick="onImportMaskClick(event)">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="importModalTitle">
-      <div class="modal-hd">
-        <h2 id="importModalTitle" data-i18n="importModalTitle">导入 Cursor Token</h2>
-        <button type="button" class="modal-x" onclick="closeImportModal()" aria-label="关闭">×</button>
-      </div>
-      <div class="modal-bd">
-        <p class="hint" data-i18n="importHint">粘贴 Cursor 会话 Token（形如 user_&lt;id&gt;::&lt;jwt&gt; 或 WorkosCursorSessionToken=...），一行一个。</p>
-        <textarea id="importRaw" rows="4" data-i18n-placeholder="importPlaceholder" placeholder="粘贴 Cursor 会话 Token"></textarea>
-        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-          <p class="hint" data-i18n="importBackupHint"><b>从备份恢复</b>：粘贴「导出凭证」生成的完整 JSON 备份（单账号或多账号备份）。</p>
-          <textarea id="importBackupRaw" rows="4" data-i18n-placeholder="importBackupPlaceholder" placeholder='{"version":1,"plugin":"cursor-provider","accounts":[...]}'></textarea>
-          <div style="margin-top:8px">
-            <button type="button" class="secondary" id="importBackupBtn" onclick="importBackupAuth(this)" data-i18n="restoreBackup">恢复凭据</button>
-          </div>
-        </div>
-      </div>
-      <div class="modal-ft">
-        <button type="button" class="secondary" onclick="closeImportModal()" data-i18n="cancel">取消</button>
-        <button type="button" class="primary" id="importConfirmBtn" onclick="importAuth(this)" data-i18n="importConfirm">导入并保存</button>
-      </div>
+<div class="wrap">
+  <h1>Cursor 账号面板</h1>
+  <div class="sub">Cursor Connect-RPC · OAuth 会话连续性 · 选模型探活 · 多账号管理</div>
+  <div id="authBox" class="card" style="display:none;margin-bottom:16px">
+    <div style="margin-bottom:8px;color:var(--mut)">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
+    <div style="display:flex;gap:8px">
+      <input id="management-key" type="password" placeholder="management key" class="field-input" autocomplete="off">
+      <button id="load" onclick="saveKey()">连接</button>
     </div>
   </div>
-  <div class="modal-mask" id="deleteModal" onclick="onDeleteMaskClick(event)">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
-      <div class="modal-hd">
-        <h2 id="deleteModalTitle" data-i18n="deleteModalTitle">删除账号</h2>
-        <button type="button" class="modal-x" onclick="closeDeleteModal()" aria-label="关闭">×</button>
+  <div class="bar">
+    <button class="sec" id="importBtn" onclick="openImportModal()">导入 Token</button>
+    <button class="sec" id="exportBtn" onclick="exportAccounts(this)" title="导出全部账号凭证为 JSON，可直接再导入">导出凭证</button>
+    <button class="sec" id="enableAllBtn" onclick="setAllStatus(false, this)">全部启用</button>
+    <button class="sec" id="disableAllBtn" onclick="setAllStatus(true, this)">全部禁用</button>
+    <input id="searchInput" class="search" type="search" placeholder="搜索备注 / Token / ID" oninput="onSearchChange(this.value)" autocomplete="off">
+    <button class="sec sort-btn" id="sortBtn" onclick="toggleSort(this)" title="当前：创建时间倒序（新→旧），点击切名称升序">创建 ↓</button>
+  </div>
+  <div class="filter-bar" id="filterBar">
+    <button type="button" class="ftag active" data-state="all" onclick="filterState('all',this)">全部 <span class="cnt" id="cntAll">0</span></button>
+    <button type="button" class="ftag" data-state="available" onclick="filterState('available',this)" title="已启用 · 可正常承载推理请求">可用 <span class="cnt" id="cntAvailable">0</span></button>
+    <button type="button" class="ftag" data-state="disabled" onclick="filterState('disabled',this)" title="已被手动禁用，不参与调度">禁用 <span class="cnt" id="cntDisabled">0</span></button>
+    <button type="button" class="ftag" data-state="test" onclick="filterState('test',this)" title="探活异常或错误账号；可点「测试」复核恢复">异常 <span class="cnt" id="cntTest">0</span></button>
+  </div>
+  <div class="summary card" id="summaryBox" style="display:none"></div>
+  <div id="grid" class="grid"><div class="loading">加载中…</div></div>
+</div>
+<div class="modal-mask" id="importModal" onclick="onImportMaskClick(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="importModalTitle">
+    <div class="modal-hd">
+      <h2 id="importModalTitle">导入 Cursor Token</h2>
+      <button type="button" class="modal-x" onclick="closeImportModal()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd">
+      <p class="hint">每行一个 Cursor Session Token；支持 <code>user_&lt;id&gt;::&lt;jwt&gt;</code>、<code>WorkosCursorSessionToken=...</code> 或单行 JWT。支持追加 <code>TOKEN----备注</code>。</p>
+      <textarea id="importRaw" rows="6" placeholder="user_2xxxx::eyJhbGciOi...----我的账号1&#10;WorkosCursorSessionToken=eyJhbGciOi..."></textarea>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)">
+        <p class="hint"><b>从备份恢复</b>：粘贴「导出凭证」生成的完整 JSON 备份（单账号或多账号备份）。</p>
+        <textarea id="importBackupRaw" rows="4" placeholder='{"version":1,"plugin":"cursor-provider","accounts":[...]}'></textarea>
+        <div style="margin-top:8px">
+          <button type="button" class="sec" id="importBackupBtn" onclick="submitBackupImport(this)">恢复凭据备份</button>
+        </div>
       </div>
-      <div class="modal-bd">
-        <p class="hint" id="deleteModalHint" data-i18n="deleteModalHint">确定要删除该账号吗？</p>
-        <p class="hint" style="color:var(--danger)" data-i18n="deleteModalWarn">此操作会永久删除该账号及其认证文件，且不可恢复。</p>
-      </div>
-      <div class="modal-ft">
-        <button type="button" class="secondary" onclick="closeDeleteModal()" data-i18n="cancel">取消</button>
-        <button type="button" class="primary" id="deleteConfirmBtn" onclick="confirmDeleteAuth(this)" data-i18n="deleteConfirm">删除</button>
-      </div>
+      <div class="import-result" id="importResult"></div>
+    </div>
+    <div class="modal-ft">
+      <button type="button" class="sec" onclick="closeImportModal()">取消</button>
+      <button type="button" onclick="submitImport(this)">导入并保存</button>
     </div>
   </div>
-  <div class="modal-mask" id="testModal" onclick="onTestMaskClick(event)">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="testModalTitle">
-      <div class="modal-hd">
-        <h2 id="testModalTitle" data-i18n="testModalTitle">测试模型</h2>
-        <button type="button" class="modal-x" onclick="closeTestModal()" aria-label="关闭">×</button>
-      </div>
-      <div class="modal-bd">
-        <p class="hint" id="testModalHint">选择要测试的模型</p>
-        <div class="model-list" id="testModelList"><div class="muted">加载模型中…</div></div>
-        <div class="import-result" id="testResult"></div>
-      </div>
-      <div class="modal-ft">
-        <button type="button" class="secondary" onclick="closeTestModal()" data-i18n="close">关闭</button>
-      </div>
+</div>
+<div class="modal-mask" id="deleteModal" onclick="onDeleteMaskClick(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+    <div class="modal-hd">
+      <h2 id="deleteModalTitle">删除账号</h2>
+      <button type="button" class="modal-x" onclick="closeDeleteModal()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd">
+      <p class="hint" id="deleteModalHint">确定要删除该账号吗？</p>
+      <p class="hint" style="color:var(--err)">此操作会永久删除该账号及其认证文件，且不可恢复。</p>
+    </div>
+    <div class="modal-ft">
+      <button type="button" class="sec" onclick="closeDeleteModal()">取消</button>
+      <button type="button" class="danger" id="deleteConfirmBtn" onclick="confirmDeleteAccount()">删除</button>
     </div>
   </div>
-  <div class="toasts" id="toasts"></div>
-  <script>
-    (() => {
-      "use strict";
-      const API = "/v0/management/plugins/cursor-provider";
-      const statusPath = API + "/status";
-      const disabledPath = API + "/disabled-models";
-      const importPath = API + "/import";
-      const exportPath = API + "/export";
-      const deletePath = API + "/delete";
-      const enablePath = API + "/enable";
-      const disablePath = API + "/disable";
-      const languageStorageKey = "cursor-plugin-language";
-      /* ---------- management key acquisition (3 fallbacks, zero config) ----------
-         1) 主面板 localStorage "cli-proxy-auth"（同源 iframe 内嵌时的 XOR+base64 存储）；
-         2) ?key= URL 参数（读取后立即从 history 清除，落 sessionStorage）；
-         3) 手动输入（仅 sessionStorage）。
-      */
-      const ENC_PREFIX = "enc::v1::";
-      const SECRET_SALT = "cli-proxy-api-webui::secure-storage";
-      const PANEL_STORE = "cli-proxy-auth";
-      const SS_KEY = "cursor-mgmt-key";
-      function _enc(t) { return new TextEncoder().encode(t); }
-      function _dec(b) { return new TextDecoder().decode(b); }
-      function _keyBytes() { try { return _enc(SECRET_SALT + "|" + window.location.host + "|" + navigator.userAgent); } catch (_) { return _enc(SECRET_SALT); } }
-      function _xor(d, k) { const r = new Uint8Array(d.length); for (let i = 0; i < d.length; i++) r[i] = d[i] ^ k[i % k.length]; return r; }
-      function _b64d(s) { const bin = atob(s); const b = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i); return b; }
-      function deobfuscate(p) { if (!p || !p.startsWith(ENC_PREFIX)) return p; try { return _dec(_xor(_b64d(p.slice(ENC_PREFIX.length)), _keyBytes())); } catch (_) { return p; } }
-      function isEmbedded() { try { return window.self !== window.top; } catch (_) { return false; } }
-      function readPanelKey() {
-        if (!isEmbedded()) return null;
-        let raw;
-        try { raw = localStorage.getItem(PANEL_STORE); } catch (_) { return null; }
-        if (!raw) return null;
-        try {
-          const parsed = JSON.parse(deobfuscate(raw));
-          const state = (parsed && parsed.state) || parsed || {};
-          return typeof state.managementKey === "string" && state.managementKey ? state.managementKey : null;
-        } catch (_) { return null; }
-      }
-      function readUrlKey() {
-        const value = new URLSearchParams(window.location.search).get("key");
-        if (value) {
-          try {
-            const url = new URL(window.location.href);
-            url.searchParams.delete("key");
-            history.replaceState(null, "", url.pathname + url.search + url.hash);
-          } catch (_) { /* history 不可用时忽略，key 已落 sessionStorage */ }
-        }
-        return value;
-      }
-      function persistKey(value) {
-        if (!value) return value;
-        try { sessionStorage.setItem(SS_KEY, value); } catch (_) { /* ignore */ }
-        return value;
-      }
-      function getKey() {
-        let stored = null;
-        try { stored = sessionStorage.getItem(SS_KEY); } catch (_) { /* ignore */ }
-        return stored || persistKey(readPanelKey()) || persistKey(readUrlKey());
-      }
-      function authHeaders() {
-        const key = getKey();
-        return key ? { Authorization: "Bearer " + key } : {};
-      }
-      // 显示管理密钥输入区（免密直入的降级路径）：恢复网格布局并聚焦输入框。
-      function escapeHtml(s) {
-        return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-      }
-      let pendingTestAuthIndex = "";
-      function openTestModal(idx) {
-        pendingTestAuthIndex = idx;
-        const a = (loadedAccounts || []).find(x => x.auth_index === idx);
-        const who = a ? (a.label || a.name || idx) : idx;
-        const hint = document.getElementById("testModalHint");
-        if (hint) hint.innerHTML = translate("selectTestModel") + ": <b>" + escapeHtml(who) + "</b>";
-        const res = document.getElementById("testResult");
-        if (res) { res.className = "import-result"; res.innerHTML = ""; }
-        const list = document.getElementById("testModelList");
-        if (list) list.innerHTML = "<div class=\"muted\">" + translate("loadingModels") + "</div>";
-        const modal = document.getElementById("testModal");
-        if (modal) modal.classList.add("show");
-        loadTestModels(idx);
-      }
-      function closeTestModal() {
-        pendingTestAuthIndex = "";
-        const modal = document.getElementById("testModal");
-        if (modal) modal.classList.remove("show");
-      }
-      function onTestMaskClick(e) {
-        if (e.target === document.getElementById("testModal")) closeTestModal();
-      }
-      async function loadTestModels(idx) {
-        const list = document.getElementById("testModelList");
-        if (!list) return;
-        try {
-          const d = await api(API + "/models?auth_index=" + encodeURIComponent(idx));
-          if (pendingTestAuthIndex !== idx) return;
-          if (d && d.error) {
-            list.innerHTML = "<div style=\"color:var(--danger)\">" + escapeHtml(d.error) + "</div>";
-            return;
-          }
-          const models = (d && Array.isArray(d.models)) ? d.models.filter(m => String(m || "").trim()) : [];
-          if (!models.length) {
-            list.innerHTML = "<div>" + translate("noModelsAvailable") + "</div>";
-            return;
-          }
-          list.replaceChildren();
-          for (const m of models) {
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "model-item";
-            btn.textContent = m;
-            btn.dataset.model = m;
-            btn.addEventListener("click", () => runTestModel(btn, m));
-            list.append(btn);
-          }
-        } catch (e) {
-          list.innerHTML = "<div style=\"color:var(--danger)\">" + escapeHtml(e instanceof Error ? e.message : String(e)) + "</div>";
-        }
-      }
-      async function runTestModel(btn, model) {
-        const idx = pendingTestAuthIndex;
-        if (!idx || !model) return;
-        const list = document.getElementById("testModelList");
-        const buttons = list ? list.querySelectorAll("button.model-item") : [];
-        buttons.forEach(b => { b.disabled = true; });
-        const res = document.getElementById("testResult");
-        if (res) {
-          res.className = "import-result show";
-          res.innerHTML = "<div class=\"r-hd\">" + translate("testing") + "</div>";
-        }
-        try {
-          const d = await api(API + "/test-active", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ auth_index: idx, model: model })
-          });
-          const ok = Boolean(d && d.ok);
-          if (res) {
-            res.className = "import-result show";
-            res.innerHTML = "<div class=\"r-hd " + (ok ? "ok" : "err") + "\">" + (ok ? translate("testSuccess") : translate("testFailed")) + "</div>" +
-              "<div class=\"r-item\"><span class=\"nowrap\">" + escapeHtml(model) + "</span><span class=\"" + (ok ? "" : "r-err") + "\">" + escapeHtml(ok ? (d.message || "OK") : (d.error || "Error")) + "</span></div>";
-          }
-          if (ok) showToast(translate("testSuccess"), d.message || model, "success");
-          else showToast(translate("testFailed"), d.error || "Error", "error");
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          if (res) {
-            res.className = "import-result show";
-            res.innerHTML = "<div class=\"r-hd err\">" + translate("testFailed") + "</div>" +
-              "<div class=\"r-item\"><span class=\"nowrap\">" + escapeHtml(model) + "</span><span class=\"r-err\">" + escapeHtml(msg) + "</span></div>";
-          }
-          showToast(translate("testFailed"), msg, "error");
-        } finally {
-          buttons.forEach(b => { b.disabled = false; });
-        }
-      }
-      let currentSearchQuery = "";
-      function onSearchInput(val) {
-        currentSearchQuery = String(val || "").trim().toLowerCase();
-        renderAccounts();
-      }
-      function renderSummary(accountsList) {
-        const box = document.getElementById("summaryBox");
-        if (!box) return;
-        if (!accountsList || !accountsList.length) {
-          box.style.display = "none";
-          return;
-        }
-        const total = accountsList.length;
-        let active = 0;
-        let disabled = 0;
-        const modelSet = new Set();
-        for (const a of accountsList) {
-          const st = normalizedStatus(a.status);
-          if (st === "disabled" || st === "inactive") disabled++;
-          else active++;
-          if (Array.isArray(a.models)) {
-            for (const m of a.models) {
-              if (m && m.id && !m.disabled) modelSet.add(m.id);
-            }
-          }
-        }
-        box.style.display = "flex";
-        box.innerHTML = "<span>" + translate("summaryTotal", { count: total }) + " · " +
-          "<span style=\"color:var(--success)\">" + translate("summaryActive", { count: active }) + "</span>" +
-          (disabled > 0 ? " · <span style=\"color:var(--danger)\">" + translate("summaryDisabled", { count: disabled }) + "</span>" : "") +
-          " · <span>" + translate("summaryModels", { count: modelSet.size }) + "</span></span>";
-      }
+</div>
+<div class="modal-mask" id="testModal" onclick="onTestMaskClick(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="testModalTitle">
+    <div class="modal-hd">
+      <h2 id="testModalTitle">测试模型</h2>
+      <button type="button" class="modal-x" onclick="closeTestModal()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd">
+      <p class="hint" id="testModalHint">选择要测试的模型</p>
+      <div class="model-list" id="testModelList"><div class="loading">加载模型中…</div></div>
+      <div class="import-result" id="testResult"></div>
+    </div>
+    <div class="modal-ft">
+      <button type="button" class="sec" onclick="closeTestModal()">关闭</button>
+    </div>
+  </div>
+</div>
+<div class="toasts" id="toasts"></div>
+<script>
+const API = "/v0/management/plugins/cursor-provider";
 
-      async function importBackupAuth(btn) {
-        const area = document.getElementById("importBackupRaw");
-        if (!area) return;
-        const val = area.value.trim();
-        if (!val) {
-          showToast(translate("missingPayload"), "请输入备份 JSON", "error");
-          return;
-        }
-        btn.disabled = true;
-        try {
-          const resp = await api(importPath, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ filename: "backup.json", content: val })
-          });
-          if (resp && resp.error) {
-            showToast("恢复失败", resp.error, "error");
-            return;
-          }
-          showToast("恢复成功", (resp && resp.message) ? resp.message : "凭据已恢复", "success");
-          area.value = "";
-          closeImportModal();
-          await loadStatus();
-        } catch (e) {
-          showToast("恢复失败", e instanceof Error ? e.message : String(e), "error");
-        } finally {
-          btn.disabled = false;
-        }
+/* ---------- management key acquisition (3 fallbacks, zero config) ----------
+   1) CPA main panel localStorage "cli-proxy-auth" (XOR+base64, same-origin
+      iframe embed) — same approach as cpa-plugin-key-policy.
+   2) ?key= URL param (cleaned from history after read, kept in sessionStorage).
+   3) Manual input (sessionStorage only, never persisted).
+*/
+const ENC_PREFIX = "enc::v1::";
+const SECRET_SALT = "cli-proxy-api-webui::secure-storage";
+const PANEL_STORE = "cli-proxy-auth";
+const SS_KEY = "cursor-mgmt-key";
+
+function _enc(t){return new TextEncoder().encode(t)}
+function _dec(b){return new TextDecoder().decode(b)}
+function _keyBytes(){try{return _enc(SECRET_SALT+"|"+window.location.host+"|"+navigator.userAgent)}catch(e){return _enc(SECRET_SALT)}}
+function _xor(d,k){const r=new Uint8Array(d.length);for(let i=0;i<d.length;i++)r[i]=d[i]^k[i%k.length];return r}
+function _b64d(s){const bin=atob(s);const b=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)b[i]=bin.charCodeAt(i);return b}
+function deobfuscate(p){if(!p||!p.startsWith(ENC_PREFIX))return p;try{return _dec(_xor(_b64d(p.slice(ENC_PREFIX.length)),_keyBytes()))}catch(e){return p}}
+function isEmbedded(){try{return window.self!==window.top}catch(e){return false}}
+
+function readPanelKey(){
+  if(!isEmbedded())return null;
+  let raw;try{raw=localStorage.getItem(PANEL_STORE)}catch(e){return null}
+  if(!raw)return null;
+  try{
+    const parsed=JSON.parse(deobfuscate(raw));
+    const st=(parsed&&parsed.state)||parsed||{};
+    return typeof st.managementKey==="string"&&st.managementKey?st.managementKey:null;
+  }catch(e){return null}
+}
+function readUrlKey(){
+  const m=new URLSearchParams(window.location.search).get("key");
+  if(m){
+    try{
+      const u=new URL(window.location.href);
+      u.searchParams.delete("key");
+      history.replaceState(null,"",u.pathname+u.search+u.hash);
+    }catch(e){}
+  }
+  return m;
+}
+function persistKey(k){
+  if(!k) return k;
+  try{ sessionStorage.setItem(SS_KEY,k); }catch(e){}
+  return k;
+}
+function getKey(){
+  let stored=null;try{stored=sessionStorage.getItem(SS_KEY)}catch(e){}
+  return stored||persistKey(readPanelKey())||persistKey(readUrlKey());
+}
+function saveKey(){
+  const inp = document.getElementById("management-key") || document.getElementById("keyInput");
+  const v = inp ? inp.value.trim() : "";
+  if(!v)return;
+  sessionStorage.setItem(SS_KEY,v);
+  const ab = document.getElementById("authBox");
+  if(ab) ab.style.display="none";
+  enterPanel();
+}
+function showAuth(){
+  const ab = document.getElementById("authBox");
+  if(ab) ab.style.display="";
+  const inp = document.getElementById("management-key") || document.getElementById("keyInput");
+  if(inp) inp.focus();
+}
+function authHeaders(k){return k?{"Authorization":"Bearer "+k}:{}}
+
+function toast(title, kind="ok", detail=""){
+  const box=document.getElementById("toasts");
+  if(!box) return;
+  const el=document.createElement("div");
+  el.className="toast "+kind;
+  el.innerHTML='<div class="t"></div>'+(detail?'<div class="d"></div>':'');
+  el.querySelector(".t").textContent=title;
+  if(detail)el.querySelector(".d").textContent=detail;
+  box.appendChild(el);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>el.classList.add("show")));
+  const kill=()=>{el.classList.remove("show");setTimeout(()=>el.remove(),300)};
+  const timer=setTimeout(kill, 4000);
+  el.addEventListener("click", ()=>{clearTimeout(timer);kill()});
+}
+
+function esc(s){
+  if(s==null) return "";
+  return String(s)
+    .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;").replaceAll("'","&#39;");
+}
+
+function fmtCST(s){
+  if(!s) return "";
+  const d=new Date(s);
+  if(isNaN(d.getTime())) return String(s);
+  return d.toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}).replaceAll("/","-");
+}
+
+let authFailCount=0;
+let authFailUntil=0;
+async function api(path, opts={}){
+  const inp = document.getElementById("management-key") || document.getElementById("keyInput") || {};
+  const k=getKey()||inp.value;
+  if(!k){ showAuth(); throw new Error("需要管理密钥"); }
+  const {__silent=false, ...rest}=opts;
+  const headers={...authHeaders(k.trim?k.trim():k), ...(rest.headers||{})};
+  const res=await fetch(API+path, {...rest, headers, cache:"no-store"});
+  const payload=await res.json().catch(()=>({}));
+  if(res.status===401||res.status===403){
+    showAuth();
+    const now=Date.now();
+    if(now<authFailUntil){ authFailCount++; }
+    else { authFailCount=1; authFailUntil=now+60000; }
+    throw new Error(authFailCount>3?"密钥连续错误已暂停，请核对后重试":"管理密钥无效或已失效");
+  }
+  if(!res.ok) throw new Error((payload&&payload.error)||("请求失败 "+res.status));
+  return payload;
+}
+
+/* ---------- state + render ---------- */
+let lastAccounts=[];
+let currentFilter="all";
+let currentSearch="";
+let currentSort="created_desc";
+const SORT_LABELS={created_desc:"创建 ↓", az:"名称 ↑", za:"名称 ↓"};
+const SORT_NEXT={created_desc:"az", az:"za", za:"created_desc"};
+const SORT_TITLE={
+  created_desc:"当前：创建时间倒序（新→旧），点击切名称升序",
+  az:"当前：名称升序（A→Z），点击切名称降序",
+  za:"当前：名称降序（Z→A），点击切创建时间倒序"
+};
+
+function accountState(a){
+  const hostSt = a.host_runtime ? String(a.host_runtime.status || "").toLowerCase() : "";
+  const st = String(a.status || "").toLowerCase();
+  if(a.disabled || hostSt === "disabled" || st === "disabled" || st === "inactive") return "disabled";
+  if(st.startsWith("unavailable") || st === "error") return "test";
+  return "available";
+}
+
+function stateBadge(a){
+  const st=accountState(a);
+  if(st==="disabled") return '<span class="badge disabled">禁用</span>';
+  if(st==="test") return '<span class="badge test-failed" title="状态异常或探活失败">异常</span>';
+  return '<span class="badge">可用</span>';
+}
+
+function displayName(a){
+  return a.label || a.name || a.auth_index || "未命名 Cursor 账号";
+}
+
+function sortedAccounts(accounts){
+  const list=accounts||[];
+  if(currentSort==="created_desc"){
+    return [...list].sort((x,y)=>{
+      const xt=x&&x.created_at?Date.parse(x.created_at):0;
+      const yt=y&&y.created_at?Date.parse(y.created_at):0;
+      return yt-xt;
+    });
+  }
+  const dir=currentSort==="az"?1:-1;
+  return [...list].sort((x,y)=>dir*String(displayName(x)).localeCompare(String(displayName(y)),"zh-CN"));
+}
+
+function card(a){
+  const st=accountState(a);
+  const models = Array.isArray(a.models) ? a.models.map(m => typeof m === "string" ? m : (m.id || m.name || "")) : [];
+  const modelTags = models.slice(0, 4).map(m => `<span class="model-tag">${esc(m)}</span>`).join("");
+  const more = models.length > 4 ? `<span class="model-tag">+${models.length-4}</span>` : "";
+  const authIdx = a.auth_index || a.name || "";
+  const isDisabled = st === "disabled";
+  const toggleBtn = isDisabled
+    ? `<button class="sec" data-action="enable" data-auth-index="${esc(authIdx)}">启用</button>`
+    : `<button class="sec" data-action="disable" data-auth-index="${esc(authIdx)}">禁用</button>`;
+  const succ = (a.host_runtime && a.host_runtime.success_attempts) || 0;
+  const fail = (a.host_runtime && a.host_runtime.failed_attempts) || 0;
+
+  return `<div class="card" data-state="${st}" data-auth="${esc(authIdx)}" data-name="${esc(displayName(a))}" data-search="${esc(((a.label||"")+" "+(a.name||"")+" "+(authIdx)).toLowerCase())}">
+  <h2><span class="name" title="${esc(displayName(a))}">${esc(displayName(a))}</span> <span style="display:flex;gap:6px;align-items:center;flex:none">${stateBadge(a)}<button type="button" class="card-del" data-action="delete" data-auth-index="${esc(authIdx)}" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>
+  <div class="uid" title="${esc(authIdx)}">${esc(authIdx)}</div>
+  <div class="row"><span class="k">账号标识</span><span class="v mono" title="${esc(a.label||"-")}">${esc(a.label||"-")}</span></div>
+  <div class="row"><span class="k">累计请求</span><span class="v"><span class="ok">${succ}</span> 成功 / <span class="${fail>0?'err':'muted'}">${fail}</span> 失败</span></div>
+  ${a.created_at?`<div class="row"><span class="k">创建</span><span class="v mono">${esc(fmtCST(a.created_at))}</span></div>`:""}
+  <div class="models">${modelTags}${more}</div>
+  <div class="actions">
+    <button class="sec" data-action="test" data-auth-index="${esc(authIdx)}" title="选择模型发送一次真实推理请求">测试</button>
+    ${toggleBtn}
+  </div>
+  </div>`;
+}
+
+function renderGrid(){
+  const g=document.getElementById("grid");
+  if(!g) return;
+  if(!lastAccounts.length){ g.innerHTML='<div class="loading">暂无账号，点上方「导入 Token」添加。</div>'; renderSummary([]); return; }
+  g.innerHTML=sortedAccounts(lastAccounts).map(card).join("");
+  bindCardActions(g);
+  applyCardVisibility();
+  renderSummary(lastAccounts);
+}
+
+function bindCardActions(root){
+  (root||document).querySelectorAll("[data-action]").forEach(btn=>{
+    if(btn._bound) return;
+    btn._bound=true;
+    btn.addEventListener("click", ev=>{
+      const act=ev.currentTarget.dataset.action;
+      const id=ev.currentTarget.dataset.authIndex;
+      if(act==="test") openTestModal(id);
+      else if(act==="enable") setStatus(id,false,ev.currentTarget);
+      else if(act==="disable") setStatus(id,true,ev.currentTarget);
+      else if(act==="delete") openDeleteModal(id);
+    });
+  });
+}
+
+function applyCardVisibility(){
+  const q=(currentSearch||"").toLowerCase();
+  document.querySelectorAll("#grid .card").forEach(c=>{
+    let show=true;
+    if(currentFilter!=="all") show=c.dataset.state===currentFilter;
+    if(show&&q) show=(c.dataset.search||"").includes(q);
+    c.style.display=show?"":"none";
+  });
+}
+
+function onSearchChange(q){
+  currentSearch=(q==null?"":String(q)).trim().toLowerCase();
+  applyCardVisibility();
+}
+
+function toggleSort(btn){
+  currentSort=SORT_NEXT[currentSort]||"created_desc";
+  if(btn){
+    btn.textContent=SORT_LABELS[currentSort];
+    btn.title=SORT_TITLE[currentSort];
+    if(currentSort!=="created_desc") btn.classList.add("active");
+    else btn.classList.remove("active");
+  }
+  renderGrid();
+}
+
+function filterState(st, btn){
+  currentFilter=st;
+  document.querySelectorAll("#filterBar .ftag").forEach(b=>b.classList.remove("active"));
+  if(btn) btn.classList.add("active");
+  applyCardVisibility();
+}
+
+function renderSummary(accounts){
+  const box=document.getElementById("summaryBox");
+  if(!accounts||!accounts.length){
+    if(box) box.style.display="none";
+    updateCounts(0,0,0,0);
+    return;
+  }
+  let cAvail=0, cDis=0, cTest=0;
+  const modelSet = new Set();
+  for(const a of accounts){
+    const s=accountState(a);
+    if(s==="disabled") cDis++;
+    else if(s==="test") cTest++;
+    else cAvail++;
+    if(Array.isArray(a.models)){
+      for(const m of a.models){
+        const mid = typeof m === "string" ? m : (m.id || m.name);
+        if(mid) modelSet.add(mid);
       }
-      window.importBackupAuth = importBackupAuth;
+    }
+  }
+  updateCounts(accounts.length, cAvail, cDis, cTest);
+  if(box){
+    box.style.display="block";
+    box.innerHTML=`
+    <div class="summary-hd">
+      <span class="summary-title">Cursor 账号状态概览</span>
+      <span class="summary-meta">共 ${accounts.length} 个账号 · 发现 ${modelSet.size} 个模型</span>
+    </div>
+    <div class="summary-grid">
+      <div class="summary-item"><div class="k">总账号</div><div class="v">${accounts.length}</div></div>
+      <div class="summary-item"><div class="k">可用账号</div><div class="v ok">${cAvail}</div></div>
+      <div class="summary-item"><div class="k">已禁用</div><div class="v ${cDis>0?'err':'muted'}">${cDis}</div></div>
+      <div class="summary-item"><div class="k">探活异常</div><div class="v ${cTest>0?'warn':'muted'}">${cTest}</div></div>
+    </div>`;
+  }
+}
 
-      window.openTestModal = openTestModal;
-      window.closeTestModal = closeTestModal;
-      window.onTestMaskClick = onTestMaskClick;
+function updateCounts(all, avail, dis, test){
+  const elA=document.getElementById("cntAll"); if(elA) elA.textContent=all;
+  const elV=document.getElementById("cntAvailable"); if(elV) elV.textContent=avail;
+  const elD=document.getElementById("cntDisabled"); if(elD) elD.textContent=dis;
+  const elT=document.getElementById("cntTest"); if(elT) elT.textContent=test;
+}
 
-      function showAuth() {
-        authBox.style.display = "";
-        if (keyInput) keyInput.focus();
-      }
-      // 保存手动输入的管理密钥并进入面板：写入会话存储后隐藏输入区，随后加载状态。
-      function saveKey() {
-        const value = keyInput.value.trim();
-        if (!value) {
-          setNoticeKey("missingKey", {}, "error");
-          return;
-        }
-        persistKey(value);
-        authBox.style.display = "none";
-        loadStatus();
-      }
-      const translations = {
-        "zh-CN": {
-          documentTitle: "Cursor 管理",
-          metaDescription: "Cursor 插件状态、本地估算用量与模型禁用管理。",
-          pageTitle: "Cursor 管理",
-          languageLabel: "语言",
-          headerPrefix: "由 Cursor 插件直接提供，不依赖",
-          headerJoin: "或",
-          headerSuffix: "前端改造。",
-          managementKeyLabel: "管理密钥",
-          keyHelp: "未自动获取到管理密钥，请手动输入；密钥仅保留在当前标签页会话。",
-          loadStatus: "加载状态",
-          missingKey: "请输入 CLIProxyAPI 管理密钥。",
-          authenticationFailed: "管理密钥无效或无权访问。",
-          requestFailed: "请求失败：HTTP {status}",
-          unexpectedError: "发生了未预期的错误。",
-          quotaBalance: "订阅余额",
-          unavailable: "不可用",
-          unknown: "未知",
-          localEstimatedTokens: "本地估算上游 Token",
-          pluginExecutorRuns: "插件执行次数",
-          cachedTokens: "缓存 Token",
-          successfulRequests: "成功请求（最终）",
-          failedRequests: "失败请求（最终）",
-          logicalRequestsHelp: "每\u2060次用\u2060户\u2060调\u2060用最多计一个最\u2060终\u2060结\u2060果；检\u2060查\u2060点回\u2060退和宿\u2060主\u2060重\u2060试不会重\u2060复\u2060计\u2060入请\u2060求。近\u2060期\u2060请\u2060求 ID 使用 16 MiB 固\u2060定\u2060内\u2060存去\u2060重；在每 15 分钟不超过 100 万个完\u2060成\u2060事\u2060件的设\u2060计\u2060负\u2060载内，误\u2060判\u2060概\u2060率低于亿\u2060分\u2060之\u2060六。误\u2060判会跳过一条本\u2060地\u2060终\u2060态\u2060样\u2060本，使计\u2060数少\u2060计并保\u2060留此\u2060前的最\u2060近\u2060结\u2060果。Token 按插\u2060件实\u2060际\u2060执\u2060行\u2060次\u2060数估\u2060算。",
-          hostSchedulerMetrics: "宿主调度指标",
-          hostSchedulerMetricsHelp: "由 CLIProxyAPI 汇总认证调度尝试；重试和回\u2060退会分别计数，因此不能与用户请求一一对应。",
-          hostSchedulerStatus: "宿主状态",
-          hostSuccessfulAttempts: "成功尝试",
-          hostFailedAttempts: "失败尝试",
-          checkpointMetrics: "检查点指标",
-          checkpointMetricsHelp: "仅汇总本插件进程内的命中、失效、回\u2060退、字节数和首 Token 延迟；不保存或显\u2060示会话标识、检查点或 Token 内容。",
-          checkpointHits: "检查点命中",
-          checkpointMisses: "检查点未命中",
-          checkpointInvalidations: "检查点失效",
-          checkpointFallbacks: "完整重放回退",
-          fullReplayBytes: "完整重放字节",
-          suffixBytes: "续传字节",
-          averageTTFT: "平均首 Token 延迟",
-          savingSettings: "正在保存设置…",
-          savedSettingsOne: "设置已保存，当前禁用 {count} 个模型。",
-          savedSettingsMany: "设置已保存，当前禁用 {count} 个模型。",
-          modelLegendOne: "OAuth 模型禁用（{count} 个可用模型）",
-          modelLegendMany: "OAuth 模型禁用（{count} 个可用模型）",
-          disableAll: "全部禁用",
-          allModelsSelectedOne: "已选择全部 {count} 个模型，请保存更改后生效。",
-          allModelsSelectedMany: "已选择全部 {count} 个模型，请保存更改后生效。",
-          saveSettings: "保存设置",
-          readingStatus: "正在读取 Cursor 插件状态…",
-          noAuthFiles: "未发现 Cursor OAuth 认证文件。",
-          loadedAccountsOne: "已加载 {count} 个 Cursor 账户。",
-          loadedAccountsMany: "已加载 {count} 个 Cursor 账户。",
-          status_active: "活跃",
-          status_inactive: "未激活",
-          status_disabled: "已禁用",
-          status_unavailable: "不可用",
-          status_error: "错误",
-          status_cooldown: "冷却中",
-          status_unknown: "未知",
-          importCredential: "导入 Token",
-          exportCredential: "导出凭证",
-          enableAll: "全部启用",
-          disableAllAccounts: "全部禁用",
-          processing: "处理中…",
-          importModalTitle: "导入 Cursor Token",
-          importHint: "粘贴 Cursor 会话 Token（形如 user_<id>::<jwt> 或 WorkosCursorSessionToken=...），一行一个。",
-          importPlaceholder: "粘贴 Cursor 会话 Token",
-          cancel: "取消",
-          importConfirm: "导入并保存",
-          importEmpty: "请先粘贴 Cursor 会话 Token。",
-          importSuccess: "导入成功",
-          importDuplicate: "账号已存在，未重复导入",
-          importFailed: "导入失败",
-          exportFailed: "导出失败",
-          exportEmpty: "没有可导出的账号",
-          exportSuccess: "已导出 {count} 个账号",
-          deleteModalTitle: "删除账号",
-          deleteModalHint: "确定要删除该账号吗？",
-          deleteModalWarn: "此操作会永久删除该账号及其认证文件，且不可恢复。",
-          deleteConfirm: "删除",
-          testActive: "测试",
-          testModalTitle: "测试模型",
-          searchPlaceholder: "搜索账号 / 标识 / 邮箱...",
-          importBackupHint: "从备份恢复：粘贴「导出凭证」生成的完整 JSON 备份（支持单账号或多账号备份）。",
-          importBackupPlaceholder: "{\"version\":1,\"plugin\":\"cursor-provider\",\"accounts\":[...]}",
-          restoreBackup: "恢复凭据",
-          noMatch: "没有匹配搜索条件的账号",
-          summaryTotal: "共 {count} 个账号",
-          summaryActive: "{count} 个活跃",
-          summaryDisabled: "{count} 个已禁用",
-          summaryModels: "{count} 个可用模型",
-          selectTestModel: "选择要测试的模型",
-          loadingModels: "加载模型中…",
-          testing: "测试中…",
-          testSuccess: "测试成功",
-          testFailed: "测试失败",
-          noModelsAvailable: "暂无可用模型",
-          close: "关闭",
-          deleteSuccess: "账号已删除",
-          deleteFailed: "删除失败",
-          enableAccount: "启用",
-          disableAccount: "禁用",
-          enableSuccess: "账号已启用",
-          disableSuccess: "账号已禁用",
-          enableAllSuccess: "已启用 {count} 个账号",
-          disableAllSuccess: "已禁用 {count} 个账号",
-          toggleFailed: "操作失败"
-        },
-        en: {
-          documentTitle: "Cursor Management",
-          metaDescription: "Manage Cursor plugin status, local estimated usage, and disabled models.",
-          pageTitle: "Cursor Management",
-          languageLabel: "Language",
-          headerPrefix: "Served directly by the Cursor plugin. No frontend changes to",
-          headerJoin: "or",
-          headerSuffix: "are required.",
-          managementKeyLabel: "management key",
-          keyHelp: "No management key was detected automatically; enter it manually. It is kept for this tab session only.",
-          loadStatus: "Load status",
-          missingKey: "Enter the CLIProxyAPI management key.",
-          authenticationFailed: "The management key is invalid or is not authorized.",
-          requestFailed: "Request failed: HTTP {status}",
-          unexpectedError: "An unexpected error occurred.",
-          quotaBalance: "Subscription balance",
-          unavailable: "Unavailable",
-          unknown: "Unknown",
-          localEstimatedTokens: "Local estimated upstream tokens",
-          pluginExecutorRuns: "Plugin executor runs",
-          cachedTokens: "Cached tokens",
-          successfulRequests: "Successful requests (terminal)",
-          failedRequests: "Failed requests (terminal)",
-          logicalRequestsHelp: "At most one terminal outcome is recorded per user call; checkpoint fallbacks and host retries are not double-counted as requests. Recent request IDs use 16 MiB fixed-memory deduplication. Within its design load of up to 1,000,000 completions per 15-minute window, the false-positive probability is below 6e-8. A false positive skips one local terminal sample, undercounting it and retaining the previous latest outcome. Tokens are estimated per plugin executor run.",
-          hostSchedulerMetrics: "Host scheduler metrics",
-          hostSchedulerMetricsHelp: "CLIProxyAPI scheduler attempts are shown separately. Retries and fallbacks each count as attempts, so they do not map one\u2011to\u2011one to user requests.",
-          hostSchedulerStatus: "Host status",
-          hostSuccessfulAttempts: "Successful attempts",
-          hostFailedAttempts: "Failed attempts",
-          checkpointMetrics: "Checkpoint metrics",
-          checkpointMetricsHelp: "Aggregated in this plugin process only: hits, invalidations, fallbacks, bytes, and time to first token. It never stores or shows session IDs, checkpoints, or token content.",
-          checkpointHits: "Checkpoint hits",
-          checkpointMisses: "Checkpoint misses",
-          checkpointInvalidations: "Checkpoint invalidations",
-          checkpointFallbacks: "Full replay fallbacks",
-          fullReplayBytes: "Full replay bytes",
-          suffixBytes: "Suffix bytes",
-          averageTTFT: "Average time to first token",
-          savingSettings: "Saving settings…",
-          savedSettingsOne: "Settings saved. {count} model is disabled.",
-          savedSettingsMany: "Settings saved. {count} models are disabled.",
-          modelLegendOne: "OAuth models to disable ({count} available model)",
-          modelLegendMany: "OAuth models to disable ({count} available models)",
-          disableAll: "Disable all",
-          allModelsSelectedOne: "Selected all {count} model. Save changes to apply.",
-          allModelsSelectedMany: "Selected all {count} models. Save changes to apply.",
-          saveSettings: "Save settings",
-          readingStatus: "Reading Cursor plugin status…",
-          noAuthFiles: "No Cursor OAuth credential files were found.",
-          loadedAccountsOne: "Loaded {count} Cursor account.",
-          loadedAccountsMany: "Loaded {count} Cursor accounts.",
-          status_active: "Active",
-          status_inactive: "Inactive",
-          status_disabled: "Disabled",
-          status_unavailable: "Unavailable",
-          status_error: "Error",
-          status_cooldown: "Cooling down",
-          status_unknown: "Unknown",
-          importCredential: "Import token",
-          exportCredential: "Export credentials",
-          enableAll: "Enable all",
-          disableAllAccounts: "Disable all",
-          processing: "Working…",
-          importModalTitle: "Import Cursor token",
-          importHint: "Paste a Cursor session token (user_<id>::<jwt> or WorkosCursorSessionToken=...), one per line.",
-          importPlaceholder: "Paste a Cursor session token",
-          cancel: "Cancel",
-          importConfirm: "Import and save",
-          importEmpty: "Paste a Cursor session token first.",
-          importSuccess: "Imported",
-          importDuplicate: "Account already exists; skipped",
-          importFailed: "Import failed",
-          exportFailed: "Export failed",
-          exportEmpty: "No accounts to export",
-          exportSuccess: "Exported {count} account(s)",
-          deleteModalTitle: "Delete account",
-          deleteModalHint: "Delete this account?",
-          deleteModalWarn: "This permanently deletes the account and its credential file and cannot be undone.",
-          deleteConfirm: "Delete",
-          testActive: "Test",
-          testModalTitle: "Test Model",
-          searchPlaceholder: "Search account / label / email...",
-          importBackupHint: "Restore from backup: paste the full exported JSON backup (single or multiple accounts).",
-          importBackupPlaceholder: "{\"version\":1,\"plugin\":\"cursor-provider\",\"accounts\":[...]}",
-          restoreBackup: "Restore Backup",
-          noMatch: "No accounts match the search",
-          summaryTotal: "{count} accounts total",
-          summaryActive: "{count} active",
-          summaryDisabled: "{count} disabled",
-          summaryModels: "{count} models available",
-          selectTestModel: "Select model to test",
-          loadingModels: "Loading models…",
-          testing: "Testing…",
-          testSuccess: "Test Succeeded",
-          testFailed: "Test Failed",
-          noModelsAvailable: "No models available",
-          close: "Close",
-          deleteSuccess: "Account deleted",
-          deleteFailed: "Delete failed",
-          enableAccount: "Enable",
-          disableAccount: "Disable",
-          enableSuccess: "Account enabled",
-          disableSuccess: "Account disabled",
-          enableAllSuccess: "Enabled {count} account(s)",
-          disableAllSuccess: "Disabled {count} account(s)",
-          toggleFailed: "Action failed"
-        }
-      };
-      const metaDescription = document.querySelector('meta[name="description"]');
-      const languageSelect = document.querySelector("#language");
-      const keyInput = document.querySelector("#management-key");
-      const authBox = document.querySelector("#authBox");
-      const loadButton = document.querySelector("#load");
-      const notice = document.querySelector("#notice");
-      const accounts = document.querySelector("#accounts");
-      const toasts = document.querySelector("#toasts");
-      const importButton = document.querySelector("#importBtn");
-      const exportButton = document.querySelector("#exportBtn");
-      const enableAllButton = document.querySelector("#enableAllBtn");
-      const disableAllButton = document.querySelector("#disableAllBtn");
-      let loadedAccounts = null;
-      let noticeState = null;
-      let currentLanguage = initialLanguage();
-      let pendingDeleteIndex = "";
+/* ---------- actions: test / toggle / delete ---------- */
+let pendingTestAuthId = "";
+function openTestModal(authId){
+  pendingTestAuthId = authId;
+  const a = lastAccounts.find(x => (x.auth_index || x.name) === authId);
+  const who = a ? displayName(a) : authId;
+  const hint = document.getElementById("testModalHint");
+  if(hint) hint.innerHTML = `选择要测试的模型：<b>${esc(who)}</b>`;
+  const res = document.getElementById("testResult");
+  if(res){ res.className = "import-result"; res.innerHTML = ""; }
+  const list = document.getElementById("testModelList");
+  if(list) list.innerHTML = '<div class="loading">加载可用模型中…</div>';
+  const tm = document.getElementById("testModal");
+  if(tm) tm.classList.add("show");
+  loadModelsForTest(authId);
+}
 
-      function normalizeLanguage(language) {
-        return String(language || "").toLowerCase().startsWith("zh") ? "zh-CN" : "en";
-      }
+function closeTestModal(){
+  pendingTestAuthId = "";
+  const tm = document.getElementById("testModal");
+  if(tm) tm.classList.remove("show");
+}
 
-      function initialLanguage() {
-        try {
-          const saved = localStorage.getItem(languageStorageKey);
-          if (saved === "zh-CN" || saved === "en") return saved;
-        } catch (_) {
-          // Browser privacy settings may disable storage; language detection still works.
-        }
-        const browserLanguages = navigator.languages?.length ? navigator.languages : [navigator.language];
-        return browserLanguages.some((language) => String(language).toLowerCase().startsWith("zh")) ? "zh-CN" : "en";
-      }
+function onTestMaskClick(e){
+  if(e.target===document.getElementById("testModal")) closeTestModal();
+}
 
-      function translate(key, values = {}) {
-        let message = translations[currentLanguage][key];
-        for (const [name, value] of Object.entries(values)) {
-          message = message.replace(`{${name}}`, String(value));
-        }
-        return message;
-      }
+async function loadModelsForTest(authId){
+  const list = document.getElementById("testModelList");
+  if(!list) return;
+  try {
+    const d = await api("/models?auth_index=" + encodeURIComponent(authId));
+    if(pendingTestAuthId !== authId) return;
+    const models = (d && Array.isArray(d.models)) ? d.models : [];
+    if(!models.length){
+      list.innerHTML = '<div class="loading">该账号暂无可测试模型</div>';
+      return;
+    }
+    list.innerHTML = models.map(m => `<button type="button" class="model-item" data-model="${esc(m)}">${esc(m)}</button>`).join("");
+    list.querySelectorAll("button.model-item").forEach(btn => {
+      btn.addEventListener("click", () => runActiveTest(btn, btn.dataset.model));
+    });
+  } catch(e) {
+    list.innerHTML = `<div style="color:var(--err);padding:10px">${esc(e.message)}</div>`;
+  }
+}
 
-      function countKey(one, many, count) {
-        return count === 1 ? one : many;
-      }
+async function runActiveTest(btn, model){
+  const authId = pendingTestAuthId;
+  if(!authId || !model) return;
+  const list = document.getElementById("testModelList");
+  if(list) list.querySelectorAll("button.model-item").forEach(b => b.disabled = true);
+  const res = document.getElementById("testResult");
+  if(res){
+    res.className = "import-result show";
+    res.innerHTML = `<div class="r-hd"><span class="spin"></span>正在对 ${esc(model)} 发起推理探活…</div>`;
+  }
+  try {
+    const d = await api("/test-active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auth_index: authId, model: model })
+    });
+    const ok = Boolean(d && d.ok);
+    if(res){
+      res.innerHTML = `<div class="r-hd ${ok?'ok':'err'}">${ok?'测试成功':'测试失败'}</div>
+        <div style="margin-top:4px">${esc(d.message || d.error || (ok ? "OK" : "Error"))}</div>`;
+    }
+    if(ok) {
+      toast("测试成功", "ok", `${model}: ${d.message || "OK"}`);
+      loadAccounts();
+    } else {
+      toast("测试失败", "err", `${model}: ${d.error || "未知错误"}`);
+    }
+  } catch(e) {
+    if(res) res.innerHTML = `<div class="r-hd err">测试出错</div><div>${esc(e.message)}</div>`;
+    toast("测试出错", "err", e.message);
+  } finally {
+    if(list) list.querySelectorAll("button.model-item").forEach(b => b.disabled = false);
+  }
+}
 
-      function preserveModelSelections() {
-        if (!loadedAccounts) return;
-        const selections = new Map();
-        for (const form of accounts.querySelectorAll("form[data-auth-index]")) {
-          selections.set(form.dataset.authIndex, new Set(
-            [...form.querySelectorAll("input[type=checkbox]:checked")].map((input) => input.value)
-          ));
-        }
-        for (const account of loadedAccounts) {
-          const selected = selections.get(account.auth_index);
-          if (!selected) continue;
-          for (const model of account.models) model.disabled = selected.has(model.id);
-        }
-      }
+async function setStatus(authId, disabled, btn){
+  const act = disabled ? "disable" : "enable";
+  const origText = btn ? btn.textContent : "";
+  if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spin"></span>处理中'; }
+  try {
+    await api(`/${act}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auth_index: authId })
+    });
+    toast(disabled ? "账号已禁用" : "账号已启用", "ok");
+    await loadAccounts();
+  } catch(e) {
+    toast("操作失败", "err", e.message);
+    if(btn){ btn.disabled = false; btn.textContent = origText; }
+  }
+}
 
-      function applyLanguage(language, persist) {
-        preserveModelSelections();
-        currentLanguage = normalizeLanguage(language);
-        document.documentElement.lang = currentLanguage;
-        languageSelect.value = currentLanguage;
-        document.title = translate("documentTitle");
-        metaDescription.setAttribute("content", translate("metaDescription"));
-        for (const element of document.querySelectorAll("[data-i18n]")) {
-          element.textContent = translate(element.dataset.i18n);
-        }
-        if (persist) {
-          try {
-            localStorage.setItem(languageStorageKey, currentLanguage);
-          } catch (_) {
-            // The selected language still applies for the current page session.
-          }
-        }
-        renderAccounts();
-        renderNotice();
-      }
+async function setAllStatus(disabled, btn){
+  const act = disabled ? "disable" : "enable";
+  const label = disabled ? "全部禁用" : "全部启用";
+  const origText = btn ? btn.textContent : "";
+  if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spin"></span>' + label; }
+  try {
+    const res = await api(`/${act}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    toast(`${label}成功`, "ok", `已影响 ${res.count || 0} 个账号`);
+    await loadAccounts();
+  } catch(e) {
+    toast(`${label}失败`, "err", e.message);
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = origText; }
+  }
+}
 
-      function renderNotice() {
-        const message = noticeState
-          ? noticeState.literal || translate(noticeState.key, noticeState.values)
-          : "";
-        const kind = noticeState?.kind || "";
-        notice.textContent = message;
-        notice.className = `notice ${kind}`.trim();
-        notice.setAttribute("role", kind === "error" ? "alert" : "status");
-      }
+let pendingDeleteAuthId = "";
+function openDeleteModal(authId){
+  pendingDeleteAuthId = authId;
+  const a = lastAccounts.find(x => (x.auth_index || x.name) === authId);
+  const who = a ? displayName(a) : authId;
+  const hint = document.getElementById("deleteModalHint");
+  if(hint) hint.innerHTML = `确定要删除账号 <b>${esc(who)}</b> 吗？`;
+  const dm = document.getElementById("deleteModal");
+  if(dm) dm.classList.add("show");
+}
+function closeDeleteModal(){
+  pendingDeleteAuthId = "";
+  const dm = document.getElementById("deleteModal");
+  if(dm) dm.classList.remove("show");
+}
+function onDeleteMaskClick(e){
+  if(e.target===document.getElementById("deleteModal")) closeDeleteModal();
+}
+async function confirmDeleteAccount(){
+  const authId = pendingDeleteAuthId;
+  if(!authId) return;
+  const btn = document.getElementById("deleteConfirmBtn");
+  if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spin"></span>删除中'; }
+  try {
+    await api("/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auth_index: authId })
+    });
+    toast("账号已删除", "ok");
+    closeDeleteModal();
+    await loadAccounts();
+  } catch(e) {
+    toast("删除失败", "err", e.message);
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = "删除"; }
+  }
+}
 
-      function setNoticeKey(key, values = {}, kind = "") {
-        noticeState = { key, values, kind };
-        renderNotice();
-      }
+/* ---------- import modal ---------- */
+function openImportModal(){
+  const raw = document.getElementById("importRaw"); if(raw) raw.value = "";
+  const bRaw = document.getElementById("importBackupRaw"); if(bRaw) bRaw.value = "";
+  const r = document.getElementById("importResult");
+  if(r){ r.className = "import-result"; r.innerHTML = ""; }
+  const im = document.getElementById("importModal");
+  if(im) im.classList.add("show");
+}
+function closeImportModal(){
+  const im = document.getElementById("importModal");
+  if(im) im.classList.remove("show");
+}
+function onImportMaskClick(e){
+  if(e.target===document.getElementById("importModal")) closeImportModal();
+}
 
-      function setNoticeLiteral(message, kind = "") {
-        noticeState = { literal: message, kind };
-        renderNotice();
-      }
-
-      function toast(title, kind = "ok", detail = "") {
-        const item = document.createElement("div");
-        item.className = "toast " + kind;
-        const head = document.createElement("div");
-        head.className = "t";
-        head.textContent = title;
-        item.append(head);
-        if (detail) {
-          const body = document.createElement("div");
-          body.className = "d";
-          body.textContent = detail;
-          item.append(body);
-        }
-        toasts.append(item);
-        requestAnimationFrame(() => requestAnimationFrame(() => item.classList.add("show")));
-        const kill = () => { item.classList.remove("show"); setTimeout(() => item.remove(), 300); };
-        item.addEventListener("click", kill);
-        setTimeout(kill, kind === "err" ? 6000 : 4000);
-        while (toasts.children.length > 5) toasts.firstChild.remove();
-      }
-
-      function busy(button, on) {
-        if (!button) return;
-        if (on) { button.dataset.orig = button.innerHTML; button.disabled = true; button.innerHTML = '<span class="spin"></span>' + translate("processing"); }
-        else { button.disabled = false; if (button.dataset.orig) button.innerHTML = button.dataset.orig; }
-      }
-
-      function openImportModal() {
-        document.querySelector("#importModal").classList.add("show");
-        const area = document.querySelector("#importRaw");
-        if (area) setTimeout(() => area.focus(), 0);
-      }
-      function closeImportModal() { document.querySelector("#importModal").classList.remove("show"); }
-      function onImportMaskClick(event) { if (event.target === document.querySelector("#importModal")) closeImportModal(); }
-      function openDeleteModal(authIndex, label) {
-        pendingDeleteIndex = authIndex;
-        const hint = document.querySelector("#deleteModalHint");
-        if (hint) hint.textContent = translate("deleteModalHint") + (label ? "（" + label + "）" : "");
-        document.querySelector("#deleteModal").classList.add("show");
-      }
-      function closeDeleteModal() { pendingDeleteIndex = ""; document.querySelector("#deleteModal").classList.remove("show"); }
-      function onDeleteMaskClick(event) { if (event.target === document.querySelector("#deleteModal")) closeDeleteModal(); }
-
-      async function importAuth(button) {
-        const raw = (document.querySelector("#importRaw").value || "").trim();
-        if (!raw) { toast(translate("importEmpty"), "warn"); return; }
-        busy(button, true);
-        const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-        let ok = 0; let dup = 0; const errors = [];
-        for (let index = 0; index < lines.length; index++) {
-          if (lines.length > 1) button.innerHTML = '<span class="spin"></span>' + (index + 1) + "/" + lines.length;
-          try {
-            const data = await api(importPath, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ content: lines[index] })
-            });
-            if (data && data.duplicate) dup += 1;
-            else if (data && data.ok) ok += 1;
-            else errors.push((data && data.message) || translate("importFailed"));
-          } catch (error) {
-            errors.push(error instanceof Error ? error.message : String(error));
-          }
-        }
-        busy(button, false);
-        if (errors.length) {
-          toast(translate("importFailed"), "err", errors.slice(0, 2).join("；"));
-        } else {
-          const detail = [ok ? ok + " ok" : "", dup ? dup + " dup" : ""].filter(Boolean).join(" / ");
-          toast(translate("importSuccess"), "ok", detail || translate("importDuplicate"));
-          document.querySelector("#importRaw").value = "";
-          closeImportModal();
-          await loadStatus();
-        }
-      }
-
-      async function exportAuth(button) {
-        busy(button, true);
-        try {
-          const data = await api(exportPath);
-          const accounts = (data && data.accounts) || [];
-          if (!accounts.length) { toast(translate("exportEmpty"), "warn"); return; }
-          const stamp = new Date().toISOString().slice(0, 10);
-          const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement("a");
-          link.href = url;
-          link.download = "cursor-credentials-" + stamp + ".json";
-          document.body.append(link);
-          link.click();
-          link.remove();
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-          toast(translate("exportSuccess", { count: accounts.length }), "ok");
-        } catch (error) {
-          toast(translate("exportFailed"), "err", error instanceof Error ? error.message : String(error));
-        } finally {
-          busy(button, false);
-        }
-      }
-
-      async function confirmDeleteAuth(button) {
-        const authIndex = pendingDeleteIndex;
-        if (!authIndex) { closeDeleteModal(); return; }
-        busy(button, true);
-        try {
-          await api(deletePath, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auth_index: authIndex }) });
-          toast(translate("deleteSuccess"), "ok");
-          closeDeleteModal();
-          await loadStatus();
-        } catch (error) {
-          toast(translate("deleteFailed"), "err", error instanceof Error ? error.message : String(error));
-        } finally {
-          busy(button, false);
-        }
-      }
-
-      async function toggleAccount(authIndex, disable, button) {
-        busy(button, true);
-        try {
-          const path = disable ? disablePath : enablePath;
-          await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auth_index: authIndex }) });
-          toast(disable ? translate("disableSuccess") : translate("enableSuccess"), "ok");
-          await loadStatus();
-        } catch (error) {
-          toast(translate("toggleFailed"), "err", error instanceof Error ? error.message : String(error));
-        } finally {
-          busy(button, false);
-        }
-      }
-
-      async function toggleAll(disable, button) {
-        busy(button, true);
-        try {
-          const path = disable ? disablePath : enablePath;
-          const data = await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-          const count = (data && data.count) || 0;
-          toast(translate(disable ? "disableAllSuccess" : "enableAllSuccess", { count }), "ok");
-          await loadStatus();
-        } catch (error) {
-          toast(translate("toggleFailed"), "err", error instanceof Error ? error.message : String(error));
-        } finally {
-          busy(button, false);
-        }
-      }
-
-      async function api(path, options = {}) {
-        const key = getKey() || keyInput.value.trim();
-        if (!key) {
-          showAuth();
-          throw new Error(translate("missingKey"));
-        }
-        const headers = { Authorization: `Bearer ${key}`, ...(options.headers || {}) };
-        const response = await fetch(path, { ...options, headers, cache: "no-store" });
-        const payload = await response.json().catch(() => ({}));
-        // 密钥失效时重新显示输入区，允许用户修正密钥后重试。
-        if (response.status === 401 || response.status === 403) {
-          showAuth();
-          throw new Error(translate("authenticationFailed"));
-        }
-        if (!response.ok) throw new Error((payload && payload.error) ? payload.error : translate("requestFailed", { status: response.status }));
-        return payload;
-      }
-
-      function metric(label, value) {
-        const item = document.createElement("div");
-        item.className = "metric";
-        const name = document.createElement("span");
-        name.textContent = label;
-        const number = document.createElement("strong");
-        number.textContent = String(value);
-        item.append(name, number);
-        return item;
-      }
-
-      function modelID(id) {
-        const code = document.createElement("code");
-        for (const part of id.split(/([/_-])/)) {
-          if (!part) continue;
-          code.append(document.createTextNode(part));
-          if (/^[/_-]$/.test(part)) code.append(document.createElement("wbr"));
-        }
-        return code;
-      }
-
-      function normalizedStatus(status) {
-        const rawStatus = String(status || "unknown").toLowerCase();
-        return rawStatus.startsWith("unavailable") ? "unavailable" : rawStatus;
-      }
-
-      function statusLabel(status) {
-        const normalized = normalizedStatus(status);
-        return translations[currentLanguage][`status_${normalized}`] || status || translate("status_unknown");
-      }
-
-      function renderAccount(account) {
-        const card = document.createElement("section");
-        card.className = "panel account";
-        const head = document.createElement("div");
-        head.className = "account-head";
-        const titleWrap = document.createElement("div");
-        const title = document.createElement("h2");
-        title.textContent = account.label || account.name;
-        const subtitle = document.createElement("p");
-        subtitle.className = "muted";
-        subtitle.textContent = account.name;
-        titleWrap.append(title, subtitle);
-        const pill = document.createElement("span");
-        pill.className = "pill";
-        pill.dataset.status = normalizedStatus(account.status);
-        pill.textContent = statusLabel(account.status);
-        const headActions = document.createElement("span");
-        headActions.style.display = "flex";
-        headActions.style.gap = "var(--space-2)";
-        headActions.style.alignItems = "center";
-        const deleteButton = document.createElement("button");
-        deleteButton.type = "button";
-        deleteButton.className = "card-del";
-        deleteButton.dataset.action = "delete";
-        deleteButton.dataset.authIndex = account.auth_index;
-        deleteButton.setAttribute("aria-label", translate("deleteConfirm"));
-        deleteButton.textContent = "×";
-        headActions.append(pill, deleteButton);
-        head.append(titleWrap, headActions);
-
-        const metrics = document.createElement("div");
-        metrics.className = "metrics";
-        metrics.append(
-          metric(translate("quotaBalance"), translate("unavailable")),
-          metric(translate("localEstimatedTokens"), account.local_usage?.total_tokens || 0),
-          metric(translate("pluginExecutorRuns"), account.local_usage?.executor_runs || 0),
-          metric(translate("cachedTokens"), translate("unknown")),
-          metric(translate("successfulRequests"), account.local_usage?.succeeded || 0),
-          metric(translate("failedRequests"), account.local_usage?.failed || 0)
-        );
-        const logicalHelp = document.createElement("p");
-        logicalHelp.className = "muted";
-        logicalHelp.textContent = translate("logicalRequestsHelp");
-
-        const runtime = account.host_runtime || {};
-        const hostMetrics = document.createElement("section");
-        hostMetrics.className = "metric-section";
-        const hostTitle = document.createElement("h3");
-        hostTitle.textContent = translate("hostSchedulerMetrics");
-        const hostHelp = document.createElement("p");
-        hostHelp.className = "muted";
-        hostHelp.textContent = translate("hostSchedulerMetricsHelp");
-        const hostGrid = document.createElement("div");
-        hostGrid.className = "metrics";
-        hostGrid.append(
-          metric(translate("hostSchedulerStatus"), statusLabel(runtime.status)),
-          metric(translate("hostSuccessfulAttempts"), account.host_runtime?.success_attempts || 0),
-          metric(translate("hostFailedAttempts"), account.host_runtime?.failed_attempts || 0)
-        );
-        hostMetrics.append(hostTitle, hostHelp, hostGrid);
-
-        const checkpoint = account.checkpoint_metrics || {};
-        const checkpointMetrics = document.createElement("section");
-        checkpointMetrics.className = "metric-section";
-        const checkpointTitle = document.createElement("h3");
-        checkpointTitle.textContent = translate("checkpointMetrics");
-        const checkpointHelp = document.createElement("p");
-        checkpointHelp.className = "muted";
-        checkpointHelp.textContent = translate("checkpointMetricsHelp");
-        const checkpointGrid = document.createElement("div");
-        checkpointGrid.className = "metrics";
-        checkpointGrid.append(
-          metric(translate("checkpointHits"), checkpoint.hits || 0),
-          metric(translate("checkpointMisses"), checkpoint.misses || 0),
-          metric(translate("checkpointInvalidations"), checkpoint.invalidations || 0),
-          metric(translate("checkpointFallbacks"), checkpoint.fallbacks || 0),
-          metric(translate("fullReplayBytes"), checkpoint.full_replay_bytes || 0),
-          metric(translate("suffixBytes"), checkpoint.suffix_bytes || 0),
-          metric(translate("averageTTFT"), checkpoint.ttft_average_ms == null ? translate("unknown") : `${checkpoint.ttft_average_ms} ms`)
-        );
-        checkpointMetrics.append(checkpointTitle, checkpointHelp, checkpointGrid);
-
-        const form = document.createElement("form");
-        form.dataset.authIndex = account.auth_index;
-        const accountNotice = document.createElement("div");
-        accountNotice.className = "notice account-notice";
-        accountNotice.setAttribute("role", "status");
-        accountNotice.setAttribute("aria-live", "polite");
-        function setAccountNoticeKey(key, values = {}, kind = "") {
-          accountNotice.textContent = translate(key, values);
-          accountNotice.className = `notice account-notice ${kind}`.trim();
-          accountNotice.setAttribute("role", kind === "error" ? "alert" : "status");
-        }
-        function setAccountNoticeLiteral(message, kind = "") {
-          accountNotice.textContent = message;
-          accountNotice.className = `notice account-notice ${kind}`.trim();
-          accountNotice.setAttribute("role", kind === "error" ? "alert" : "status");
-        }
-        form.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          const button = form.querySelector('button[type="submit"]');
-          button.disabled = true;
-          setAccountNoticeKey("savingSettings");
-          const selected = [...form.querySelectorAll("input[type=checkbox]:checked")].map((input) => input.value);
-          try {
-            await api(disabledPath, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ auth_index: account.auth_index, disabled_models: selected })
-            });
-            const noticeKey = countKey("savedSettingsOne", "savedSettingsMany", selected.length);
-            setAccountNoticeKey(noticeKey, { count: selected.length }, "success");
-          } catch (error) {
-            setAccountNoticeLiteral(error instanceof Error ? error.message : translate("unexpectedError"), "error");
-          } finally {
-            button.disabled = false;
-          }
-        });
-        const fieldset = document.createElement("fieldset");
-        const legend = document.createElement("legend");
-        const legendKey = countKey("modelLegendOne", "modelLegendMany", account.models.length);
-        legend.textContent = translate(legendKey, { count: account.models.length });
-        const modelGrid = document.createElement("div");
-        modelGrid.className = "models";
-        for (const model of account.models) {
-          const label = document.createElement("label");
-          label.className = "model";
-          const checkbox = document.createElement("input");
-          checkbox.type = "checkbox";
-          checkbox.value = model.id;
-          checkbox.checked = Boolean(model.disabled);
-          label.append(checkbox, modelID(model.id));
-          modelGrid.append(label);
-        }
-        const actions = document.createElement("div");
-        actions.className = "actions";
-        const disableAll = document.createElement("button");
-        disableAll.className = "secondary";
-        disableAll.type = "button";
-        disableAll.dataset.action = "disable-all";
-        disableAll.textContent = translate("disableAll");
-        disableAll.disabled = account.models.length === 0;
-        disableAll.addEventListener("click", () => {
-          for (const checkbox of modelGrid.querySelectorAll('input[type="checkbox"]')) {
-            checkbox.checked = true;
-          }
-          const noticeKey = countKey("allModelsSelectedOne", "allModelsSelectedMany", account.models.length);
-          setAccountNoticeKey(noticeKey, { count: account.models.length });
-        });
-        const save = document.createElement("button");
-        save.className = "primary";
-        save.type = "submit";
-        save.dataset.action = "save-settings";
-        save.textContent = translate("saveSettings");
-        const toggle = document.createElement("button");
-        toggle.type = "button";
-        toggle.className = "secondary";
-        toggle.dataset.action = "toggle-account";
-        toggle.dataset.authIndex = account.auth_index;
-        const disabled = ["disabled", "inactive"].includes(normalizedStatus(account.status));
-        toggle.textContent = disabled ? translate("enableAccount") : translate("disableAccount");
-        toggle.dataset.disable = disabled ? "false" : "true";
-        const testBtn = document.createElement("button");
-        testBtn.type = "button";
-        testBtn.className = "secondary";
-        testBtn.dataset.action = "test";
-        testBtn.dataset.authIndex = account.auth_index;
-        testBtn.textContent = translate("testActive");
-        testBtn.addEventListener("click", () => openTestModal(account.auth_index));
-        actions.append(testBtn, save, disableAll, toggle);
-        fieldset.append(legend, modelGrid);
-        form.append(fieldset, accountNotice, actions);
-        card.append(head, metrics, logicalHelp, hostMetrics, checkpointMetrics, form);
-        return card;
-      }
-
-      function renderAccounts() {
-        accounts.replaceChildren();
-        if (loadedAccounts === null) return;
-        renderSummary(loadedAccounts);
-        if (!loadedAccounts.length) {
-          const empty = document.createElement("section");
-          empty.className = "panel empty";
-          empty.textContent = translate("noAuthFiles");
-          accounts.append(empty);
-          return;
-        }
-        let list = loadedAccounts;
-        if (currentSearchQuery) {
-          list = loadedAccounts.filter(a => {
-            const str = ((a.label || "") + " " + (a.name || "") + " " + (a.auth_index || "") + " " + (a.status || "")).toLowerCase();
-            return str.includes(currentSearchQuery);
-          });
-        }
-        if (!list.length) {
-          const empty = document.createElement("section");
-          empty.className = "panel empty";
-          empty.textContent = translate("noMatch");
-          accounts.append(empty);
-          return;
-        }
-        accounts.append(...list.map(renderAccount));
-      }
-
-      async function loadStatus() {
-        loadButton.disabled = true;
-        setNoticeKey("readingStatus");
-        accounts.replaceChildren();
-        try {
-          const status = await api(statusPath);
-          loadedAccounts = status.accounts;
-          renderAccounts();
-          const noticeKey = countKey("loadedAccountsOne", "loadedAccountsMany", status.accounts.length);
-          setNoticeKey(noticeKey, { count: status.accounts.length }, "success");
-        } catch (error) {
-          setNoticeLiteral(error instanceof Error ? error.message : translate("unexpectedError"), "error");
-        } finally {
-          loadButton.disabled = false;
-        }
-      }
-
-      const searchInput = document.getElementById("searchInput");
-      if (searchInput) {
-        searchInput.addEventListener("input", (e) => onSearchInput(e.target.value));
-      }
-      languageSelect.addEventListener("change", () => applyLanguage(languageSelect.value, true));
-      loadButton.addEventListener("click", () => saveKey());
-      keyInput.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") saveKey();
+async function submitImport(btn){
+  const raw = document.getElementById("importRaw");
+  const text = raw ? raw.value.trim() : "";
+  if(!text){ toast("请输入 Token", "warn"); return; }
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  const rBox = document.getElementById("importResult");
+  if(rBox){
+    rBox.className = "import-result show";
+    rBox.innerHTML = `<div class="r-hd"><span class="spin"></span>正在导入 ${lines.length} 个 Token…</div>`;
+  }
+  if(btn) btn.disabled = true;
+  let okN = 0, errN = 0;
+  const logs = [];
+  for(let i=0; i<lines.length; i++){
+    const line = lines[i];
+    try {
+      const resp = await api("/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: `token_${i+1}.json`, content: line })
       });
-      importButton.addEventListener("click", openImportModal);
-      exportButton.addEventListener("click", () => exportAuth(exportButton));
-      enableAllButton.addEventListener("click", () => toggleAll(false, enableAllButton));
-      disableAllButton.addEventListener("click", () => toggleAll(true, disableAllButton));
-      function bindCardActions(root) {
-        root.addEventListener("click", (event) => {
-          const trigger = event.target.closest("[data-action]");
-          if (!trigger) return;
-          const action = trigger.dataset.action;
-          if (action === "delete") {
-            openDeleteModal(trigger.dataset.authIndex || "", "");
-          } else if (action === "test") {
-            openTestModal(trigger.dataset.authIndex || "");
-          } else if (action === "toggle-account") {
-            toggleAccount(trigger.dataset.authIndex || "", trigger.dataset.disable === "true", trigger);
-          }
-        });
-      }
-      bindCardActions(accounts);
-      applyLanguage(currentLanguage, false);
-      // 启动主题同步 watcher（嵌入父面板 MutationObserver + 独立时跟随系统主题）。
-      if (window.__cursorThemeSync) window.__cursorThemeSync();
-      // 免密直入：已有密钥时直接加载状态；无密钥才显示输入区。
-      if (getKey()) {
-        loadStatus();
-      } else {
-        showAuth();
-      }
-    })();
-  </script>
+      okN++;
+      logs.push(`<div style="color:var(--ok)">✓ 第 ${i+1} 行: ${esc(resp.message || "导入成功")}</div>`);
+    } catch(e) {
+      errN++;
+      logs.push(`<div style="color:var(--err)">✗ 第 ${i+1} 行: ${esc(e.message)}</div>`);
+    }
+  }
+  if(btn) btn.disabled = false;
+  if(rBox){
+    rBox.innerHTML = `<div class="r-hd ${errN===0?'ok':'warn'}">导入完成：成功 ${okN} 个，失败 ${errN} 个</div>` + logs.join("");
+  }
+  if(okN > 0) {
+    toast("导入完成", okN === lines.length ? "ok" : "warn", `成功 ${okN} / 失败 ${errN}`);
+    loadAccounts();
+  } else {
+    toast("导入失败", "err", "所有 Token 均未能成功导入");
+  }
+}
+
+async function submitBackupImport(btn){
+  const bRaw = document.getElementById("importBackupRaw");
+  const text = bRaw ? bRaw.value.trim() : "";
+  if(!text){ toast("请输入备份 JSON", "warn"); return; }
+  const rBox = document.getElementById("importResult");
+  if(rBox){
+    rBox.className = "import-result show";
+    rBox.innerHTML = '<div class="r-hd"><span class="spin"></span>正在解析并恢复备份凭据…</div>';
+  }
+  if(btn) btn.disabled = true;
+  try {
+    const resp = await api("/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: "backup.json", content: text })
+    });
+    if(rBox) rBox.innerHTML = `<div class="r-hd ok">恢复成功</div><div>${esc(resp.message || "凭据已恢复")}</div>`;
+    toast("恢复成功", "ok", resp.message || "凭据已恢复");
+    loadAccounts();
+  } catch(e) {
+    if(rBox) rBox.innerHTML = `<div class="r-hd err">恢复失败</div><div>${esc(e.message)}</div>`;
+    toast("恢复失败", "err", e.message);
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+
+/* ---------- export accounts ---------- */
+async function exportAccounts(btn){
+  const orig = btn ? btn.textContent : "";
+  if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spin"></span>正在导出'; }
+  try {
+    const data = await api("/export");
+    const jsonStr = JSON.stringify(data, null, 2);
+    const blob = new Blob([jsonStr], {type: "application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+    a.href = url;
+    a.download = `cursor-provider-credentials-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast("导出成功", "ok", `已导出 ${data.count || 0} 个账号凭据`);
+  } catch(e) {
+    toast("导出失败", "err", e.message);
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = orig; }
+  }
+}
+
+/* ---------- load accounts on entry ---------- */
+async function loadAccounts(){
+  const lb = document.getElementById("load");
+  if(lb) lb.disabled = true;
+  try {
+    const d = await api("/status");
+    lastAccounts = (d && Array.isArray(d.accounts)) ? d.accounts : [];
+    renderGrid();
+  } catch(e) {
+    const g = document.getElementById("grid");
+    if(g) g.innerHTML = `<div class="loading" style="color:var(--err)">加载失败: ${esc(e.message)}</div>`;
+    renderSummary([]);
+  } finally {
+    if(lb) lb.disabled = false;
+  }
+}
+
+function enterPanel(){
+  loadAccounts();
+}
+
+// 自动连接流程与按键绑定
+(function init(){
+  const keyInput = document.getElementById("management-key") || document.getElementById("keyInput");
+  if(keyInput){
+    keyInput.addEventListener("keydown", function(e){
+      if(e.key === "Enter") saveKey();
+    });
+  }
+  const loadBtn = document.getElementById("load");
+  if(loadBtn){
+    loadBtn.addEventListener("click", saveKey);
+  }
+
+  if(window.__cursorThemeSync) window.__cursorThemeSync();
+  const k = getKey();
+  if(!k){
+    showAuth();
+  } else {
+    enterPanel();
+  }
+})();
+</script>
 </body>
 </html>

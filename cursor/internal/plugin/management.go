@@ -67,15 +67,11 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: managementDisablePath},
 		},
 		Resources: []managementResource{
+			// 仅声明 /panel 为宿主侧边栏菜单入口；避免将 /status 重复注册导致侧边栏出现双 Cursor 菜单
 			{
 				Path:        "/panel",
 				Menu:        "Cursor",
 				Description: "Cursor dashboard: status, usage, token import and model controls / Cursor 控制面板：状态、用量、Token 导入与模型管理。",
-			},
-			{
-				Path:        "/status",
-				Menu:        "Cursor",
-				Description: "Cursor status (compatible alias) / Cursor 状态页（兼容别名）。",
 			},
 		},
 	}
@@ -84,7 +80,7 @@ func managementRegistration() managementRegistrationResponse {
 // handleManagement 分发管理 API 请求与前端资源请求。
 // [参数] ctx: 上下文；raw: 原始 JSON 序列化的 managementRequest。
 // [返回] 接口响应体或错误。
-// 最近修改时间 2026-10-11（支持 /panel、/accounts、/models 与 /test-active 请求分发）
+// 最近修改时间 2026-10-11（收敛 Resources 为单菜单项并支持 /enable-all 与 /disable-all 路由）
 func (handler *Handler) handleManagement(ctx context.Context, raw []byte) (any, error) {
 	var request managementRequest
 	if err := json.Unmarshal(raw, &request); err != nil {
@@ -112,9 +108,9 @@ func (handler *Handler) handleManagement(ctx context.Context, raw []byte) (any, 
 		return handler.exportCredentials(ctx)
 	case strings.HasSuffix(cleanPath, "/delete") && strings.EqualFold(request.Method, http.MethodPost):
 		return handler.deleteCredential(ctx, request.Body)
-	case strings.HasSuffix(cleanPath, "/enable") && strings.EqualFold(request.Method, http.MethodPost):
+	case (strings.HasSuffix(cleanPath, "/enable") || strings.HasSuffix(cleanPath, "/enable-all")) && strings.EqualFold(request.Method, http.MethodPost):
 		return handler.toggleCredential(ctx, request.Body, false)
-	case strings.HasSuffix(cleanPath, "/disable") && strings.EqualFold(request.Method, http.MethodPost):
+	case (strings.HasSuffix(cleanPath, "/disable") || strings.HasSuffix(cleanPath, "/disable-all")) && strings.EqualFold(request.Method, http.MethodPost):
 		return handler.toggleCredential(ctx, request.Body, true)
 	default:
 		return managementResponse{StatusCode: http.StatusNotFound, Headers: jsonHeaders(), Body: []byte(`{"error":"not found"}`)}, nil

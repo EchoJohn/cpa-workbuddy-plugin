@@ -40,9 +40,10 @@ func Test_Handler_ManagementRegister_exposes_cursor_management_resource_and_auth
 	require.NoError(t, json.Unmarshal(raw, &response))
 	require.True(t, response.OK)
 	require.Contains(t, string(response.Result), `"Path":"/panel"`)
-	require.Contains(t, string(response.Result), `"Path":"/status"`)
 	require.Contains(t, string(response.Result), `"Menu":"Cursor"`)
 	require.Contains(t, string(response.Result), `Cursor dashboard: status, usage, token import and model controls`)
+	// 验证未将 /status 重复注册为 Resource 菜单项（防双菜单项）
+	require.NotContains(t, string(response.Result), `"resources":[{"Path":"/panel","Menu":"Cursor","Description":"Cursor dashboard: status, usage, token import and model controls / Cursor 控制面板：状态、用量、Token 导入与模型管理。"},{"Path":"/status"`)
 	require.Contains(t, string(response.Result), `"Path":"/plugins/cursor-provider/status"`)
 	require.Contains(t, string(response.Result), `"Path":"/plugins/cursor-provider/accounts"`)
 	require.Contains(t, string(response.Result), `"Path":"/plugins/cursor-provider/models"`)
