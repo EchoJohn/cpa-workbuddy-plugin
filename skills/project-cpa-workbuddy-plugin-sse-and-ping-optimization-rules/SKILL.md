@@ -28,6 +28,8 @@ description: 当开发、优化或排查 cpa-workbuddy-plugin 仓库下任意服
 1. **收到终止信号必须立即退出读取循环并主动关闭流**：
    - 标准 OpenAI / Qoder 流：统一通过 `parseQoderSSEChunk` 识别顶层裸 `data: [DONE]`、嵌套信封 `{"body":"[DONE]"}` 及扁平 chunk，一旦 `done == true`，无论同步 `collect` 还是异步 `pump` 路径都必须立即 `break` 并调用 `stream.Close()`。
    - Trae `llm_utils_chat` 流：在 `scanSSE` 中定义哨兵错误 `errTraeStreamDone`；三条路径（`collectTraeStream`、`aggregateTraeCompletion`、`pumpTraeStreamAttempt`）在 `case "done":` 中记录终态后立即 `return errTraeStreamDone`，`scanSSE` 捕获该哨兵后立即返回 `nil` 退出 `r.Read` 循环。
+   - **顶层 `code` 业务错误帧必须被解析器识别，不得当作无关行丢弃（2026-10-12 新增，生产实证）**：阿里 Qoder 对超上下文/排队请求在 HTTP 200 下返回 `data: {"code":"403","message":"{...10605...isQueued:true...}"}`，随后保持 HTTP/2 Keep-Alive 心跳约 60 秒才由对端复位。若解析器（`parseQoderSSEChunk`）只认 `[DONE]` / `choices` / `id` / `error` 四类形态，该帧会落入兜底 `return "", false` 被 `continue` 跳过 → **读不到终止信号而死等连接**，客户端 60s 内零字节（new-api 侧记 `client_gone`）。修复契约：解析器必须识别「顶层存在非空 `code`」为错误帧并返回 payload；错误帧提取器（`sseErrorFrame`）必须识别顶层 `code` + `message` 组合，且 `message` 为内嵌 JSON 字符串时需逐层展开（保留首层业务码如 10605）产出可读文本；**异步 `pump`、同步 `collect`、非流式 `aggregate` 三条路径都必须在读取循环内命中错误帧即刻收尾**，非流式聚合尤其注意：先物化 inner stream 再聚合的实现必须在物化循环里就提前退出，否则仍会死等 EOF。
+   - **判定「立即报错」而非换号**：排队帧文本不含 credit / rate-limit marker，`shouldRotateOnUpstreamErr` 天然为 false，请求应立即以错误收尾，不做号池内换号消耗（排队是请求级 + 时段性，非账号级；同账号 ok/bad 混合、成功请求 input 可达 289K token）。
 2. **`hostHTTPDoStreamDirect` 必须使用实时流（`liveBody: resp.Body`），严禁 `io.ReadAll` 全量预缓冲**：
    - 直连流降级或无 callback 流必须返回包裹 `liveBody: resp.Body` 的 `hostHTTPStream`（配合无整体 `Timeout`、仅设 `Dial`/`TLSHandshake`/`ResponseHeaderTimeout` 的 `streamHTTPClient`）；
    - **严禁**在 `hostHTTPDoStreamDirect` 内部调用 `io.ReadAll(resp.Body)` 读完再包装成内存切片——否则 `scanSSE` 的提前退出完全失效，且在思考模型或 Keep-Alive 连接上会退化为全量阻塞等待。
