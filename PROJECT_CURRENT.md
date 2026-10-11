@@ -24,12 +24,18 @@
   - `workbuddy-provider`: **0.15.4**（5 模型轮测探活、移除保号池、硬排除测试标签 + 低积分优先）
   - `workbuddy-ai-provider`: **0.1.9**（补齐完整路由层单测资产、5 模型轮测探活、国际版签到）
   - `gemini-provider`: **0.1.1**
-  - `workbuddy-token-usage`: **0.2.4**（移除短轮询，改手动刷新并全面接入 Cursor/Gemini/ZCode 供应商归一化映射）
+  - `workbuddy-token-usage`: **0.2.5**（请求明细表新增「服务商」列并统一维度汇总表口径，展示原始 provider id；CSV 导出与四语言表头同步扩列）
 - 活动工作区：F:\cpa-plugin
 - 当前时间：2026-10-11 (GMT+8)
 
 ## 活动会话进展摘要
 
+- 当前会话（2026-10-11）：**Token 用量统计插件请求明细表新增「服务商」列，发布部署 `workbuddy-token-usage 0.2.5`**：
+  - 用户诉求：用量统计插件新增一列说明「来自哪个服务商」，例如 `qoder-ai-provider`、`cursor-provider`、`qoderwork-provider`、`traework-provider`、`WorkBuddy AI`、`workbuddy-provider`、`zcode-provider`、`Antigravity` 等，需要知道请求来自哪个服务商。
+  - 现状侦察：后端 `usage_stats/request_log.go` 的 `RequestDetail` 内嵌 `Dimensions`，`/requests` 与 `/stats/groups` 响应天然携带 `provider`；各服务商插件写 feed 时都显式写 `provider`。缺口在 `usage_stats/dashboard.go` 的请求明细表 `requestColumns` 只有 `time/model/source/session_key/…`，**没有任何列暴露 `provider`**；维度汇总表 `dimensionColumns` 已有该列。
+  - 实现（用户拍板：原始 provider id 口径 + 两张表统一）：`requestColumns` 新增 `{key:'provider',label:'table.provider'}`；`requestDataCell` 与 `requestSortValue` 补 provider 分支；`exportCSV` 行数据插入 `record.provider`；四个语言包 `export.csvHeaders` 第 3 列插入服务商表头（提供商 / Provider）。CSV 表头与行数据经括号感知核对为 25 列严格对齐。
+  - 验证与门禁全绿：`python scripts/cgo-shim-build.py token-usage-tracker` build/vet/test 全绿；新增回归脚本 `test/token-usage/panel_provider_column_repro.mjs`（真实树状 DOM 桩驱动渲染）10/10 PASS，必失败哨兵（精确移除 requestColumns 的 provider 行）触发 4 项 FAIL 证明覆盖真实，`--legacy` 反证正确识别旧版缺口，`panel_perf_repro.mjs` 性能语义未回归；6-review `STYLE: PASS`；文档落盘 `doc/2-需求/`、`doc/5-tests/`、`doc/6-review/`（均为 `2026-10-11_114924_Token用量面板新增服务商列*`）。
+  - 发布闭环与生产验收：提交 `82ccd6b`（代码+文档）→ CI run `38137152772` success（push-run `38137140618` 同 commit 亦 success）→ assets `d976228`（8 资产，7/7 sha256 OK，产物内置版本 0.2.5 且含 provider 新功能特征串）→ registry `448d351` → prune `90d60fa`（仅删 0.2.4）。生产 `plugin-store install 0.2.5` 热重载生效：`active_version=0.2.5 retired_version=0.2.4`，落盘 `.so` sha256 `230e0680d50a91ba6262c7211e991f38c7d4e8a4d785c573eb31bf19fab50441` 与本地 zip 逐字节一致；`/stats` 200、`/requests` 返回 892 条真实记录且 `provider='workbuddy-provider'`、面板 HTML 确认含新列定义与中文「提供商」表头。零容器重启（`restart_required=false`）。
 - 当前会话（2026-10-11）：**Cursor Provider 0.1.4 修复模型获取与测试探活缺陷（Query 参数反序列化丢失、真实 256 模型展现、点号模型别名归一化与测试弹窗交互增强）**：
   - 用户反馈与目标：用户指出 Cursor 插件的模型获取好像有问题，测试不通过，附带管理面板与测试弹窗截图。
   - 核心根因精准收敛（双缺陷闭环）：
