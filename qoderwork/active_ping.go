@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -131,7 +132,8 @@ func pickRandomQoderModel(sa *storedAuth) string {
 // sendActivePingQoder 对指定账号发送一次真实的推理请求用于活跃测试。
 // [参数] sa: 账号凭据；chosenModel: CPA 侧模型名（内部会映射为上游 key）。
 // [返回] 请求建立成功返回 nil，否则返回错误。
-// 最近修改时间 2026-10-10（新增测试按钮指定模型选择支持，同步自 workbuddy）
+// 最近修改时间 2026-10-12（改为首帧内容校验：读到有效业务帧才算成功，
+// 顶层 code 错误帧/错误帧即返回失败，消除 HTTP 200 下的探活假成功）
 func sendActivePingQoder(sa *storedAuth, chosenModel string) error {
 	req := &openAIRequest{
 		Model:    chosenModel,
@@ -167,10 +169,27 @@ func sendActivePingQoder(sa *storedAuth, chosenModel string) error {
 		payload := readAllUpstreamErr(reader)
 		return fmt.Errorf("upstream %d: %s", statusCode, truncateRedacted(payload, 120))
 	}
-	// 读到首个数据块即视为流已建立；后续内容丢弃。
-	buf := make([]byte, 512)
-	_, _ = reader.Read(buf)
-	return nil
+	// 读到首个有效业务帧才算流建立成功；错误帧/顶层 code 排队帧一律如实返回
+	// 失败，严禁凭首包有字节流出盲判成功（HTTP 200 假成功盲区）。
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		chunkJSON, isDone := parseQoderSSEChunk(scanner.Text())
+		if isDone {
+			return nil
+		}
+		if chunkJSON == "" {
+			continue
+		}
+		if msg := sseErrorFrame(chunkJSON); msg != "" {
+			return fmt.Errorf("upstream %d: %s", statusCode, truncateRedacted(msg, 200))
+		}
+		return nil
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("upstream stream read error: %w", err)
+	}
+	return fmt.Errorf("upstream stream closed before first payload")
 }
 
 // doActivePing 自动定时探活主逻辑，支持多模型依次轮测与熔断。

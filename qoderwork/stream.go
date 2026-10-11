@@ -88,7 +88,15 @@ func streamHeaders() http.Header {
 // 1. Direct [DONE] lines (with or without "data:" prefix and whitespace).
 // 2. Nested Qoder envelope: {"body": "<json>"} or {"body": "[DONE]"}.
 // 3. Flat OpenAI SSE chunk: {"id":..., "choices":[...]}.
+// 4. Top-level business error frame: {"code":"403","message":"..."}.
 // Returns the unwrapped inner OpenAI JSON string and whether this line indicates stream completion.
+//
+// 第 4 类（顶层 code 帧）此前不属于任何分支而被当作无关行丢弃：上游对排队/限流
+// 请求在 HTTP 200 下返回该形态（2026-10-12 实测 qwen3.8 大上下文返回
+// code=403 + 内嵌 10605/isQueued），丢弃后插件读不到终止信号，死等 Keep-Alive
+// 连接约 60 秒才由对端复位。现按错误帧返回 payload，交 sseErrorFrame 提取语义。
+//
+// 最近修改时间 2026-10-12；改动原因：识别 HTTP 200 顶层 code 业务错误帧，消除 60s 挂死。
 func parseQoderSSEChunk(line string) (string, bool) {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || strings.HasPrefix(trimmed, ":") {
@@ -134,6 +142,12 @@ func parseQoderSSEChunk(line string) (string, bool) {
 
 	// 3. In-stream error frame in outer
 	if _, hasErr := outer["error"]; hasErr {
+		return payload, false
+	}
+
+	// 4. 顶层业务错误帧：{"code":"403","message":"..."}（上游排队/限流形态）。
+	// 仅当存在非空 code 时才认；正常 chunk 由上面 1/2 分支先行返回，不会误伤。
+	if code, hasCode := outer["code"].(string); hasCode && strings.TrimSpace(code) != "" {
 		return payload, false
 	}
 
@@ -731,6 +745,13 @@ func aggregateQoderSSE(r io.Reader, model string, statusCode int) ([]byte, error
 		if chunkJSON == "" {
 			continue
 		}
+		// 错误帧（含顶层 code 排队帧）必须在读取循环内立即收尾：上游在
+		// HTTP 200 下吐出错误帧后仍保持 Keep-Alive 心跳约 60 秒，若继续读到
+		// EOF 再判定，非流式路径会与流式路径一样挂死。这里提前返回 canonical
+		// "upstream N:" 错误，交调用方按既有 failover 语义处理。
+		if msg := sseErrorFrame(chunkJSON); msg != "" {
+			return nil, fmt.Errorf("upstream %d: %s", statusCode, truncateRedacted(msg, 200))
+		}
 		inner.WriteString("data:")
 		inner.WriteString(chunkJSON)
 		inner.WriteString("\n\n")
@@ -747,6 +768,10 @@ func aggregateQoderSSE(r io.Reader, model string, statusCode int) ([]byte, error
 // quota/rate-limit failures as HTTP 200 + an error frame instead of a 4xx
 // status; without this check those frames would be forwarded to the client
 // as if they were regular content. （同步自 workbuddy，2026-09-06）
+//
+// 另识别 Qoder 上游的顶层业务错误帧 `{"code":"403","message":"..."}`
+// （排队/限流形态，message 为内嵌 JSON 字符串时二次解析提取语义）。
+// 最近修改时间 2026-10-12；改动原因：识别顶层 code 排队帧，消除 60s 挂死。
 func sseErrorFrame(content string) string {
 	var obj map[string]any
 	if json.Unmarshal([]byte(content), &obj) != nil {
@@ -754,6 +779,15 @@ func sseErrorFrame(content string) string {
 	}
 	v, present := obj["error"]
 	if !present || v == nil {
+		// 顶层 code 帧：{"code":"403","message":"..."}。message 可能是内嵌
+		// JSON 字符串（如 {"code":"10605","message":"{\"isQueued\":true,...}"}），
+		// 逐层解析取出可读文本。
+		if code, hasCode := obj["code"].(string); hasCode && strings.TrimSpace(code) != "" {
+			if msg, _ := obj["message"].(string); strings.TrimSpace(msg) != "" {
+				return code + ": " + unwrapNestedMessage(msg)
+			}
+			return code
+		}
 		return ""
 	}
 	switch t := v.(type) {
@@ -770,6 +804,39 @@ func sseErrorFrame(content string) string {
 		return t
 	}
 	return ""
+}
+
+// unwrapNestedMessage 递归展开内嵌 JSON 字符串，直到取得可读文本。
+// 上游排队帧的 message 形如 {"code":"10605","message":"{\"isQueued\":true,...}"}，
+// 需逐层解析才能取到最内层的业务描述。展开过程中保留首层业务码（如 10605），
+// 最终拼成 "code: 描述"，避免排障时丢失关键错误码。最多展开 4 层，防异常自嵌套死循环。
+// [参数] msg：可能为内嵌 JSON 的 message 文本。
+// [返回] 展开后的可读文本；非 JSON 时原样返回。
+// 最近修改时间 2026-10-12；改动原因：随顶层 code 排队帧识别新增。
+func unwrapNestedMessage(msg string) string {
+	cur := strings.TrimSpace(msg)
+	code := ""
+	for i := 0; i < 4; i++ {
+		if !strings.HasPrefix(cur, "{") {
+			break
+		}
+		var inner map[string]any
+		if json.Unmarshal([]byte(cur), &inner) != nil {
+			break
+		}
+		if c, _ := inner["code"].(string); strings.TrimSpace(c) != "" && code == "" {
+			code = strings.TrimSpace(c)
+		}
+		next, _ := inner["message"].(string)
+		if strings.TrimSpace(next) == "" {
+			break
+		}
+		cur = strings.TrimSpace(next)
+	}
+	if code != "" {
+		return code + ": " + cur
+	}
+	return cur
 }
 
 // mergeToolCallDelta folds one streaming tool_call fragment into the merged

@@ -1,5 +1,17 @@
 # Qoder AI Plugin Changelog
 
+## 0.1.9
+
+### Fix - 识别上游 HTTP 200 排队帧，消除大上下文请求 60 秒挂死
+
+- 变更要点:
+  1. 根因：阿里 Qoder 对超上下文请求投入排队，在 HTTP 200 下返回顶层 `code:"403"` 帧（内嵌 `10605 / isQueued:true / serviceAvailable:false / retryAfterSeconds:30`），随后保持 HTTP/2 Keep-Alive 心跳约 60 秒才由对端复位。插件 SSE 解析器不识别该形态，将其当作无关行丢弃，读不到终止信号而死等连接超时——客户端在 60 秒内零字节，new-api 侧记 `client_gone`。
+  2. 解析器加固：`parseQoderSSEChunk` 新增第 4 类形态识别（顶层非空 `code` 帧），使该帧进入错误处理路径而非被丢弃。
+  3. 错误语义提取：`sseErrorFrame` 扩展识别顶层 `code` + `message`，并新增 `unwrapNestedMessage` 逐层展开内嵌 JSON message（保留首层业务码如 10605），产出可读错误文本。
+  4. 三路径即时收尾：`pumpUpstreamStream`（异步流式）、`collectUpstreamStreamQoder`（同步流式）、`aggregateQoderSSE`（非流式聚合）均在读取循环内命中错误帧即刻 `break`/返回，不再死等 Keep-Alive；行为统一为「立即报错」（排队帧不含 credit/rate-limit marker，`shouldRotateOnUpstreamErr` 天然为 false，不做号池内换号消耗）。
+  5. 探活假成功修复：`sendActivePingQoder` 由「读到首字节即成功」改为「读到首个有效业务帧才成功」，错误帧/排队帧如实返回失败。
+- 涉及文件: qoder-ai/stream.go、qoder-ai/active_ping.go、qoder-ai/stream_queue_frame_test.go、qoder-ai/VERSION、qoder-ai/main.go、qoder-ai/CHANGELOG.md
+
 ## 0.1.8
 
 ### Fix - 移除未授权自动认证成功的 Panel-import 假成功逻辑
