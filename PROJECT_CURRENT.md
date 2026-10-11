@@ -18,17 +18,88 @@
 ## 项目概况
 
 - 状态：活跃维护中。9 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。最新发布/就绪版本：
+  - `zcode-provider`: **0.1.5**（重构为 Z.ai 官方 OAuth 授权链路，对接 chat.z.ai/auth 与 zcode.z.ai/api/v1/oauth/token，修复凭据结构与双通道回调捕获，生产热重载验证通过）
   - `cursor-provider`: **0.1.4**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
-  - `qoderwork-provider`: **0.9.28**（模型推理请求终止契约与超时加固、全协议形态 [DONE] 识别即时退出、10m Context 超时保护）
-  - `qoder-ai-provider`: **0.1.7**（模型推理请求终止契约与超时加固、全协议形态 [DONE] 识别即时退出、10m Context 超时保护）
+  - `qoderwork-provider`: **0.9.29**（彻底移除凭据轮询中基于 hostAuthList 创建时间的 Panel-import 假成功代码，未授权绝不误报成功；模型推理请求终止契约与超时加固）
+  - `qoder-ai-provider`: **0.1.8**（彻底移除凭据轮询中基于 hostAuthList 创建时间的 Panel-import 假成功代码，未授权绝不误报成功；模型推理请求终止契约与超时加固）
+  - `traework-provider`: **0.2.8**（测试探活 `/test-active` 改为流式首包即停 + Keep-Alive TLS 预热，消除思考模型生成整段思维链导致的 5~8s 等待并拦截 HTTP 200 下的 `event: error`；补齐 oauth-excluded-models 过滤；修复推理流扫描收到 event: done 即刻退出；默认会话级粘性路由 session）
   - `workbuddy-provider`: **0.15.4**（5 模型轮测探活、移除保号池、硬排除测试标签 + 低积分优先）
   - `workbuddy-ai-provider`: **0.1.9**（补齐完整路由层单测资产、5 模型轮测探活、国际版签到）
   - `gemini-provider`: **0.1.1**
-  - `workbuddy-token-usage`: **0.2.5**（请求明细表新增「服务商」列并统一维度汇总表口径，展示原始 provider id；CSV 导出与四语言表头同步扩列）
+  - `workbuddy-token-usage`: **0.2.6**（移除四个图表与导出图片、下线 `/stats/trends` 及序列聚合以省算力与响应体积；0.2.5 起请求明细表与维度汇总表展示原始 provider id）
 - 活动工作区：F:\cpa-plugin
 - 当前时间：2026-10-11 (GMT+8)
 
 ## 活动会话进展摘要
+
+- 当前会话（2026-10-11）：**ZCode 插件重构为官方 Z.ai OAuth 授权链路，升级发布并在生产部署热重载 `zcode-provider 0.1.5`**：
+  - 用户反馈与目标：用户指出 zcode 插件的授权此前误抄自开源项目要求粘贴 BigModel API Key，实际上应该走账号授权模式，通过官方 `https://chat.z.ai/auth?response_type=code&client_id=client_P8X5CMWmlaRO9gyO-KSqtg&redirect_uri=https%3A%2F%2Fzcode.z.ai%2Fapp%2Foauth%2Flogin%3Fredirect%3Dzcode%253A%252F%252Foauth%252Fcallback%26app_version%3D3.15.1&state=...` URL 登录授权并重新实现。
+  - 逆向分析与契约收敛：
+    1. 反编译分析本地 `D:\zcode\resources\app.asar`（ZCode 3.15.1 官方客户端），锁定官方 OAuth 协议全链路：授权页面 `chat.z.ai/auth`、客户端 ID `client_P8X5CMWmlaRO9gyO-KSqtg`、桌面端重定向 URI `https://zcode.z.ai/app/oauth/login?redirect=zcode%3A%2F%2Foauth%2Fcallback&app_version=3.15.1`；
+    2. 授权码交换接口：`POST https://zcode.z.ai/api/v1/oauth/token`（`provider: "zai"`），上游响应正式鉴权令牌 `data.token`（`zcodeJwtToken`）、`data.zai.access_token` 以及完整用户档案 `data.user`（`user_id`、`name`、`email`、`avatar` 等）；业务令牌可选解析接口为 `POST https://api.z.ai/api/auth/z/login`。
+  - 实施修复与系统实现（v0.1.5）：
+    1. **对齐官方 Z.ai 授权 URL 规范**（`zcode/oauth.go`）：实现 `buildZaiAuthorizeURL` 生成与用户要求及官方客户端逐字符一致的 32 字符 hex state 授权 URL；`handleStartLogin` 直接下发该 URL；
+    2. **对接令牌交换与双通道回调捕获**：实现 `exchangeZaiOAuthCode` 向上游兑换正式令牌；升级桥接页 `/oauth-bridge` 支持一键打开官方授权与回调地址/code 自动解析；`handlePollLogin` 增加对宿主原生回调载荷 `.oauth-zcode-provider-<state>.oauth` 的自动读取与落盘支持，彻底消除假成功代码；
+    3. **凭据结构与面板升级**：`StoredAuth` 扩展 `token`、`access_token`、`user_id`、`username`、`email`、`avatar_url`、`expires_at`，保持与调用端 `sa.APIKey` 的向下兼容；`panel.html` 增加「OAuth 授权登录」直达入口与卡片用户身份展示。
+  - 验证与门禁全绿：
+    - 本地 `python scripts/cgo-shim-build.py zcode` 编译、vet 与单测全部通过（包含 `TestZaiOAuth_ExactUserURLMatch` 与 `TestZaiOAuth_HostCallbackFile`）；
+    - 必失败哨兵反证测试确证测试进编译真实执行；
+    - `node --check` 前端脚本语法校验全绿。
+  - 全链路发布与生产热重载验收：
+    - 提交 `d92c37b` 推送到 main；GitHub Actions CI Run `38148171959` 73/73 jobs 全绿完成构建与 Release 资产打包；
+    - 下载 8 个 Release 资产（7 平台 zip + checksums）校验 `ALL CHECKSUMS OK` 并提交推送 `24570ac`；
+    - `registry.json` 同步回填 0.1.5 并验证 schema 通过，提交推送 `ef6523d`；
+    - 远端 raw URL 7/7 平台 200 OK 且 sha256 逐字节一致；`prune-release-assets.py` 清理 0.1.4 旧资产释放空间并提交推送 `d6f23c2`；
+    - 生产服务器执行 `plugin-store install zcode-provider?version=0.1.5` 热重载生效（`status: installed, restart_required: false`，零容器重启）；
+    - 生产落盘 `.so` sha256 `88607b6b0cbc9cca4773b39058205ac388fee65cd34f42c1ce83ecfa0f756cf5` 与本地 zip 逐字节 100% 一致；
+    - 生产管理接口验证：`GET /v0/management/plugins/zcode-provider/accounts` 200 OK、`GET /v0/resource/plugins/zcode-provider/panel` 200 OK、`GET /v0/management/zcode-provider-auth-url` 稳定下发真实 `chat.z.ai/auth` 授权地址。
+
+- 当前会话（2026-10-11）：**Qoder 403 首包假成功与全链路流式诊断，经验沉淀至项目 skill，完成生产 Docker Nginx proxy_buffering off 重载验证**：
+  - 用户反馈与目标：用户反馈用 New-API 接入 qwen-3.8-flash 进行测试极慢卡死无法使用，但 CPA 面板测试极快、Token 用量插件显示响应不慢；要求排查真实根因，将本次推理请求测试经验吸收到项目 skill，并检查生产 Docker Nginx 容器配置能否 reload 并完成重载。
+  - 核心根因锁定（实测铁证）：
+    1. **阿里 Qoder 上游 403 排队拦截与 60s 长连接挂死**：通过 SSH 登录生产服务器（45.207.222.65:18998）直测 CPA 8317，发现阿里通义灵码 Qoder 服务端对当前账号的 `qfmodel`（Qwen3.8-Flash）和 `qmodel_38max` 限制调用，在 HTTP 200 下返回 `data: {"code":"403","message":"...10605...isQueued:true...serviceAvailable:false..."}` 业务报错；返回后连接不关闭，持续发送 `: keep-alive` 心跳僵死整整 60 秒，最终上游 HTTP/2 报错 `INTERNAL_ERROR` 崩溃中断。
+    2. **CPA 面板探活 219ms 假成功盲区**：`active_ping.go` 发起流式测试后，只要 `reader.Read(buf)` 读到前 512 字节未校验内容即判定流已建立成功并 return；收到 403 错误包仅耗时 219ms，面板误报“活跃成功，耗时 219ms”。
+    3. **Token 用量插件 TTFT 334ms 误判陷阱**：用量日志 `token-usage-feed.ndjson` 记录的首包时间 `ttft_ns: 334153032`（334ms）恰为 403 错误帧到达时间，容易造成“响应不慢”假象；但后置字段实为 `failed: true`、`latency_ms: 60100`（卡死 60 秒）且 `total_tokens: 0`。
+    4. **New-API 渠道测试机制盲区**：New-API 后台渠道测试按钮底层强制发送 `stream: false`，必须等待全量 Blocking Aggregation 聚合，不能用于流式验证。
+    5. **链路通畅对照验证**：用生产可用模型 `auto`（1.4s）与 `deepseek-v4.1-flash`（1.1s）经 New-API 直测，流式打字机逐字实时吐出，确证 New-API 直连 CPA 8317 毫无流式阻塞。
+  - 运维与经验沉淀闭环：
+    1. **Docker Nginx 语法校验与平滑热重载**：在生产服务器执行 `docker exec nginx nginx -t` 语法检测 PASS（确认已包含 `proxy_buffering off; proxy_cache off;`），执行 `docker exec nginx nginx -s reload` 平滑重载成功；外网域名 `https://api.luode.vip/v1` 实测 1.35s 端到端打字机流式验证通过。
+    2. **项目 Skill 经验固化**：更新项目 skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules`（新增规则二首包业务报错帧白名单校验拦截、规则三全链路流式不缓冲配置与推理延迟判读规范）及 `source-notes.md`、`PROJECT_MEMORY.md`、`PROJECT_HISTORY.md`。
+
+- 当前会话（2026-10-11）：**deepseek-v4.1-flash 推理断开根因诊断 + traework 补齐 oauth-excluded-models 治理入口（修复随 traework-provider 0.2.7 上线，现承载于 0.2.8）**：
+  - 用户诉求：`new-api → CPA(https://api.luode.vip/v1) → 服务商` 链路上 `deepseek-v4.1-flash` 推理会断开，要求先定位原因并修复，再继续 Token 用量插件（图表移除）任务。
+  - 根因（三层叠加，证据见 `doc/4-bugs/2026-10-11_212700_deepseek多服务商同名认领导致推理零首字节断开根因诊断.md`）：
+    1. 同名裸模型多服务商认领：`deepseek-v4.1-flash` 由 workbuddy-provider 与 traework-provider 同时动态认领（生产日志 14:06–19:20 内该模型 163 次绑定到 `traework-*.json`），且 traework 是唯一未实现 `filterExcludedModels` 的 OAuth 插件（workbuddy / workbuddy-ai / qoder-ai / qoderwork 均已实现），导致宿主 `oauth-excluded-models` 对它只生效一半——宿主只在 `model.for_auth` 按账号注册路径过滤（`applyExcludedModels`），`model.static` 返回列表被原样登记进全局模型目录（`internal/pluginhost/adapters.go` 静态注册不过滤）。
+    2. 会话亲和钉死故障服务商：Trae 号池配额枯竭（16 次 `upstream 200: Your requests have exceeded the quota`）后仍被同一会话反复选中，宿主失败后重绑仍落到另一个 Trae 账号。
+    3. 零字节长挂：`traework/host_bridge.go:283 hostBridgeOpenTimeout=30s` 与降级直连 `ResponseHeaderTimeout=30s`（`:430`）**串行**相加，单号最坏 60s 完全不产出字节，而 `handleExecStream`（`traework/executor.go:316`）已先把响应头返回宿主 → 客户端只看到"连上但零输出"。new-api 侧 4 次断开全部 `end_reason=client_gone`、`frt=-1000`、`completion_tokens=0`，耗时 69/80/103/104s；对照成功请求首字节仅 3.7–5.5s。
+  - 本轮修复：`traework/models.go` 新增 `filterExcludedModels` 并在 `handleModelStatic` + `handleModelForAuth` 全部返回出口应用（未配置时原样返回，零行为变化；返回新切片避免污染动态缓存）。新增 `traework/models_excluded_test.go` 5 例，含"排除项永不命中"语义变异反证。`gofmt`/`cgo-shim-build.py traework` 全绿，6-review `STYLE: PASS`。
+  - 文档：Bug 主文档 + 测试主文档 + 6-review 已落盘；知识库笔记 `20-Knowledge/工程实践/CPA同名模型多服务商认领治理与零首字节断开判读法.md`（含判读法与 `PATCH /v8/management/oauth-excluded-models` 安全写入路径）。
+  - 现状：症状已随 Trae 流量退去自然平息（近 2h 该模型 599 次全部 workbuddy-provider、`client_gone` 0 次），但同名认领风险未消除。**0.2.7 发布与生产上线已完成**（后续 0.2.8 由并行会话发布并携带本修复，已在生产 `.so` 内确认 `filterExcludedModels` 存在）：CI run `38143777373` success、registry 同步、生产 `plugin-store install` 热重载 `registered version=0.2.7`、落盘 `.so` sha256 `23ea904c5bec…` 与产物一致、零容器重启、accounts 200（7 账号）、无 panic/fuse。
+  - 待办：需用户拍板的生产路由动作——`PATCH /v8/management/oauth-excluded-models` 把 `deepseek-v4.1-flash` 从 `traework-provider` 摘除（可 `models:[]` 即时回滚）。
+
+- 当前会话（2026-10-11）：**Token 用量面板移除四个图表与导出图片并下线图表专用接口与聚合（workbuddy-token-usage 0.2.6 已发布并生产热重载验收通过）**：
+  - 用户诉求：图表功能全部移除、相关统计逻辑一并去掉以节省算力与响应体积；拍板边界为"只移除 4 个图表 + 同步移除图表专用接口与聚合"。
+  - 实现：`dashboard.go` 删除 visual/advanced 两个 grid section、tooltip、导出图片按钮、聚合粒度下拉、41 个图表函数 + 6 个占比口径函数 + canvas 导出及其状态与监听；`selectedModel`/`hiddenModels` 随唯一写入者消失而移除；来源筛选锚点改挂隐藏的 `#range`；Go 替换器删 3 条并改写 2 条模式串防静默失配。后端下线 `/stats/trends` 与 `StatsTrendResponse`/`queryStatsTrendByFilter`/`statsQueryTrend`，`/stats/initial` 去 `series`+`bucket_seconds`、`/costs` 去 `series`；另清理 72 条无主 CSS 与四语言包各 56 个图表文案键。收益：`dashboard.go` −21%（269,709 → 212,658 字节）。
+  - 门禁：`cgo-shim-build.py token-usage-tracker` 全绿；新增 `chart_endpoints_removed_test.go` 4 用例与 `test/token-usage/panel_chart_removal_repro.mjs` 38 项静态断言全 PASS（旧版本反证 24 项 FAIL）；两个执行型脚本的 trends 桩改为命中即抛错后仍全绿；字段变异反证触发 2 个 FAIL 后还原复绿。文档：`doc/2-需求/…222600_*`、`doc/5-tests/…222630_*`、`doc/6-review/…222710_*`（STYLE: PASS）。
+  - 发布与生产验收：commits `d7494dd`/`bbb142b`/`61a29a0`/`a7a7778`，CI run `38147308550` success（8 资产 ALL CHECKSUMS OK），`.so` sha256 `5feaf5bd2bd4…`；生产 `plugin-store install` 返回 `installed restart_required=false`，宿主日志 `host.go:408 plugin hot reloaded active_version=0.2.6 retired_version=0.2.5`，零容器重启。线上面板 217,901 字节回读：图表标记全 0、卡片与 `groups`/`requestRows`/`key:'provider'` 保留；接口层 `/stats/trends` 404、`/stats/initial`+`/costs` 无 `series`，`/stats`+`/stats/groups`+`/requests` 均 200。0.2.5 资产定向 prune（远端 0.2.6=200、0.2.5=404）。
+  - 新发现（未修，待用户裁定）：`store is closed` 类记录失败在安装前 60 分钟就持续存在，繁忙时段约 30–40%；`feed_ingest.go:491` 在写库前已推进 `consumed` 偏移且失败分支只 `continue`，故这些用量记录**永久丢失**而非重试。疑因宿主配置热重载触发 `reopenStore` 关旧 store、在途 ingest 仍持旧句柄（见 `feed_ingest.go:179-187` 注释）。0.2.6 上线后比率未变差。
+- 当前会话（2026-10-11）：**OAuth 未授权假成功漏洞修复与 TraeWork 推理流 Keep-Alive 闲置挂起提速，升级并发布 `qoderwork-provider 0.9.29`、`qoder-ai-provider 0.1.8`、`traework-provider 0.2.6`**：
+  - 用户反馈与目标：
+    1. 发现登录授权严重异常：还没有打开链接进行授权，系统就自动认证成功了（假成功漏洞），需要彻底修复并发布生产。
+    2. TraeWork 插件模型推理速度很慢，也要修复并发布。
+  - 根因定位与机制分析：
+    1. **未授权假成功根因**：`qoderwork/oauth.go` 与 `qoder-ai/oauth.go` 中的 `handlePollLogin` 存在历史兼容的 `Panel-import path` 代码。该逻辑通过对比 `hostAuthList()` 中凭据文件的 `CreatedAt` 是否大于登录发起时间 `startedAt` 来判定是否导入了新凭据；而宿主 watcher 与后台 watchdog 在刷新账号状态、积分与令牌时，会直接重置 `CreatedAt = time.Now()`，导致存量已有账号被误判为“新授权成功的账号”，在用户根本未访问授权链接的情况下直接返回 `success`。
+    2. **TraeWork 推理速度慢根因**：`traework/upstream.go` 的 `scanSSE` 事件扫描器在遇到 `event: done` 时仅调用 `recordDone()` 设置布尔标记，未跳出读取循环；由于上游服务端保持 HTTP/1.1 与 HTTP/2 Keep-Alive 长连接闲置，读取器持续死等网络 EOF 阻塞数十秒至数分钟直到超时，使客户端在模型早已生成完毕后仍无限转圈等待，直观感受推理极慢。
+  - 实施修复与系统实现：
+    1. **彻底移除 Panel-import 假成功代码**：在 `qoderwork` 与 `qoder-ai` 的 `oauth.go` 中彻底删除扫描本地凭据文件的漏洞逻辑，仅保留标准设备授权轮询 `pollDeviceToken` 与显式 PAT 导入；未在浏览器完成授权前严格返回 `status: pending`。
+    2. **引入 `errTraeStreamDone` 哨兵实现 SSE 即时退出**：在 `traework/upstream.go` 与 `stream.go` 中，遇到 `event: done` 时立即返回哨兵错误 `errTraeStreamDone`，`scanSSE` 捕获后立即以 `nil` 干净退出大循环并主动断开流，彻底消除 Keep-Alive 闲置死等；同时对齐默认会话调度模式 `scheduler_mode: session`。
+  - 门禁与发布闭环（全链路完成）：
+    - `python scripts/cgo-shim-build.py` 验证三插件（qoderwork / qoder-ai / traework）编译、vet 与单测 100% 全绿；新增 `traework/stream_done_immediate_test.go` 模拟阻塞连接并经哨兵必失败反证确证生效；
+    - 6-review 风格回归输出 `STYLE: PASS`（`doc/6-review/2026-10-11_200000_OAuth假成功移除与TraeWork即时终止提速_6-review.md`）；
+    - CI 构建：GitHub Actions Run `38137944167`（qoderwork 0.9.29）、Run `38140097876`（qoder-ai 0.1.8）、Run `38141539697`（traework 0.2.6）均 73/73 jobs 全绿完成；
+    - 资产入库与注册表同步：三插件各 8 个 Release 资产校验 `ALL CHECKSUMS OK` 并同步 `registry.json`（commits `1c28c3d`, `46e7784`, `c60f564`, `5340240`, `5713fb8`, `95c066f`）；
+    - 发布后清理：`prune-release-assets.py --apply` 清理 `0.9.28`、`0.1.7`、`0.2.5` 旧版资产释放 61 MB（commit `923a35f`），远端当前版本 200 OK、旧版本 404；
+    - 生产热重载部署与端到端行为验收：生产服务器调用 `plugin-store install` 全部 `installed` 且 `restart_required: false`（零容器重启），落盘 `.so` sha256 与本地 zip 100% 一致（qoderwork `4c896424…`、qoder-ai `4ae2fea7…`、traework `688647e9…`）；`/v8/management/oauth/status` 在未打开链接授权时连续轮询均稳定返回 `{"status":"wait"}`（彻底消除假成功）；推理测试 `traework-provider`（`deepseek-v4.1-flash`）耗时 `244ms`、`qoderwork-provider` 耗时 `1.482s`、`qoder-ai-provider` 耗时 `313ms`，流式即时退出无挂起。
 
 - 当前会话（2026-10-11）：**Token 用量统计插件请求明细表新增「服务商」列，发布部署 `workbuddy-token-usage 0.2.5`**：
   - 用户诉求：用量统计插件新增一列说明「来自哪个服务商」，例如 `qoder-ai-provider`、`cursor-provider`、`qoderwork-provider`、`traework-provider`、`WorkBuddy AI`、`workbuddy-provider`、`zcode-provider`、`Antigravity` 等，需要知道请求来自哪个服务商。
@@ -174,98 +245,8 @@
   - 验证与门禁全绿：`python scripts/cgo-shim-build.py cursor` build/vet/test 全绿；必失败哨兵反证证实单测真实生效；`node test/cursor/panel_auto_entry_repro.mjs` 11 项断言全通过；`python scripts/validate-registry.py` 通过。
 
 - 当前会话（2026-10-10）：**修复 TraeWork 签到 9074 风控拦截与自动签到调度器，发布部署 `traework-provider 0.2.5` 并验证生产账号「用户04878311608」签到成功**：
-  - 用户反馈与目标：修复 TraeWork 签到失败问题，并用生产「用户04878311608」账号测试修复签到。
-  - 根因定位（生产真实对照实验证伪与收敛）：
-    1. `deviceIDFor` 字符串拼接 `<baseDeviceID>-<userID>`（33 字符含 `-`）破坏了 SOLO 客户端 `x-device-id` 16 位纯数字契约，被 `/trae/api/v2/ug/checkin_credits/claim` 100% 拦截返回业务码 `9074`（`"当前参与用户太多，请稍后再试"`）。
-    2. `browserlogin.go` 的 `randomDeviceID()` 从 `randomHex(8)` 过滤十进制数字后末尾补 `'0'`，制造出末尾 3~10 个连续 `'0'` 且首位可能越界（`6`~`9`）的畸形 `deviceId`（如「用户04878311608」的 `9670064000000000`），即使不拼接 `-userID` 也同样触发 9074。
-    3. `checkinAccount` 在遇到 9074 或 9095（设备去重拦截）时未轮换 `x-device-id`，重试始终命中同一拦截；同时 `autoCheckinLoop` 已同步改为 `nextAutoCheckinTime` + `time.NewTimer` 绝对时间对齐。
-  - 修复与发布验收闭环（v0.2.5）：
-    1. `deviceIDFor` 改为按 `(baseDeviceID, userID)` SHA-256 确定性派生首位 `1`~`3`、末位 `1`~`9` 的 16 位纯数字设备标识；`randomDeviceID` 改用 `crypto/rand` 直接映射 16 位纯数字；`checkinAccount` 在 9074/9095 时自动切换新 16 位随机设备号重试（最多 4 次尝试）。
-    2. 本地 `python scripts/cgo-shim-build.py traework` 全绿（含必失败哨兵反证），`6-review` `STYLE: PASS`。
-    3. 发布链路：commit `54f490a` → CI run `38059677609` 全部 64 jobs success → 下载 8 个 release 资产并校验 `ALL CHECKSUMS OK`（commit `6291b2a`）→ `publish-assets.py` 更新 `registry.json`（commit `2ffcdc9`）→ `prune-release-assets.py` 清理旧版 `0.2.4`（commit `74dfe92`）→ 远端 7 平台 raw URL 全部 200 OK 且 SHA-256 一致。
-    4. 生产部署与账号签到验收：`plugin-store install traework-provider?version=0.2.5` 成功，落盘 `.so` SHA-256 `f24fe5f42cf6203cb8f69f68b6f1edfb1b1d9b56e7cc62221a24ddb5fbdbf4eb` 与本地 zip 100% 一致，热重载 `active_version=0.2.5 retired_version=0.2.4`；「用户04878311608」（`auth_index=76bc7754f3fd72b2`）签到成功（积分包从 2 个增至 3 个，剩余积分从 130 增至 230），单账号与全量 7 账号调用 `/checkin` 均返回 `ok: true`（`checked_in: 7, fail: 0`）。
-
-- 当前会话（2026-10-10）：**Qoder AI 国际版签到假成功根因修复（qoder-ai 0.1.3，已发布部署并生产验收）**：
-  - 用户报错：生产账号 `u8e6a5348`（393 积分）与 `ua554edc3`（0 积分）签到显示「签到成功 +100」但积分不变。
-  - 根因（缺陷 A，铁证）：`qoder-ai/host_bridge.go` 用 `json:"status_code"` 解码宿主 `host.http.do` 响应，而宿主 v7.2.x 序列化 `pluginapi.HTTPResponse` 未加 json tag，实际键名是 PascalCase `{"StatusCode":404,...}`；下划线标签既不匹配键名也不构成大小写不敏感匹配 → `StatusCode` 恒为 0 → `if resp.StatusCode >= 400` 永不触发 → 404 被当作 200 成功。`performCheckinCall` 再对缺 `success` 字段的响应做 `m["success"]=true` 盲归一化，最终对外「签到成功」。同源缺陷：`qoder-ai` 与 `qoderwork` 的 `host_bridge.go` 逐字节相同，qoderwork 待修；workbuddy 0.14.30（提交 1f26e0c）为先例。
-  - 修复：移植 `parseHostHTTPDoResult`（PascalCase 优先、下划线防御性回退）；`performCheckinCall` 收紧为「缺 success 字段即返回失败」。新增 `qoder-ai/host_bridge_test.go` 三用例。
-  - 本地验证：`python scripts/cgo-shim-build.py qoder-ai` build/vet/test 全绿；反证（临时改回 `status_code`）`TestParseHostHTTPDoResult_HostUntaggedPascalCase` 必失败（`StatusCode = 0, want 200`）；必失败哨兵证明测试真实进编译。
-  - 产品事实（缺陷 B / GAP-001，本轮已生产实证）：国际版 `openapi.qoder.sh` 无 `/sash/api/v1/me/daily-check-in/{status,claim}` 端点——三账号（u8e6a5348/u0cb74401/ua554edc3）实测均 404 `NotFound`，而 `/api/v2/quota/usage` 200、`/sash/api/v1/me/campaigns` 200（均 `claimable:false, campaigns:[]`）；穷举 140 候选路径非 404 仅 `/sash/api/v1/me/campaigns`；**国际版 Web 前端（qoder.com v0.0.312，含全部 Next chunk）零签到代码**，**官方桌面客户端 `app.asar`（v0.4.3，归属国际站 openApiBaseUrl=openapi.qoder.sh）唯一奖励体系是 campaign（`campaignKey=client_launch_26`，走 `campaignUrl` 内嵌 web surface）**；对照国内版 `openapi.qoder.com.cn/sash/api/v1/me/daily-check-in/status` 实测 200（`campaignKey=cn_daily_check_in_legacy, rewardCredits=100`）证明这是产品线差异而非路径错误。**修好解码后签到必失败，真实签到入口待产品确认；禁止伪造成功。**
-  - 状态：本地修复与反证完成；**0.1.3 已发布部署并生产验收**——提交 `3fbe653`→assets `6bb57b5`→registry `746b1ef`→prune `d405ebd`；CI run 38062071659 success；生产 plugin-store install 0.1.3 落盘 `.so` sha256 `e7f7537d…a46e0` 与本地 zip 一致、日志 `plugin loaded/registered version=0.1.3`；行为验收三账号 `/checkin` 由「假成功」变为如实 `fail:1 + http 404 NotFound`（证明缺陷 A 已修，不再假成功）。真实签到入口待产品确认缺陷 B 方向后执行。文档：`doc/4-bugs/2026-10-10_223000_QoderAI签到假成功.md`、`doc/3-实施/2026-10-10_QoderAI签到假成功修复实施总览.md`、`doc/6-review/2026-10-10_224000_QoderAI签到假成功修复_6-review.md`。
-
-- 当前会话（2026-10-11）：**qoderwork-provider 0.9.26 修复宿主 HTTP 桥状态码解码错误（签到假成功根因，与 qoder-ai 0.1.3 同源）并发布部署**：
-  - 用户报错：生产 QoderWork 账号 `u09a5b6ab` 可签到但「签到好像有 bug，无法签到」——面板显示签到成功却拿不到积分（假成功）。
-  - 根因（与 qoder-ai 0.1.3 同源）：`qoderwork/host_bridge.go` 用 `json:"status_code"` 解码宿主 `host.http.do` 响应，而宿主 v7.2.x 序列化 `pluginapi.HTTPResponse` 无 json tag，线协议键名是 PascalCase `{"StatusCode":404,...}`；下划线标签既不精确匹配也不构成大小写不敏感匹配 → `StatusCode` 恒为 0 → `if resp.StatusCode >= 400` 永不触发 → 404/4xx/5xx 被当 200 成功；`performCheckinCall` 再对缺 `success` 字段的响应盲归一化 `m["success"]=true` → 对外「签到成功」但积分不变。
-  - 修复：移植 `parseHostHTTPDoResult`（PascalCase 优先 + 下划线防御性回退）；`performCheckinCall` 缺 `success` 布尔字段即返回 `success:false`。新增 `qoderwork/host_bridge_test.go` 回归。
-  - 本地验证：`python scripts/cgo-shim-build.py qoderwork` build/vet/test 全绿；反证（改回旧标签）`TestParseHostHTTPDoResult_HostUntaggedPascalCase` 必失败（`StatusCode = 0, want 200`）。
-  - 发布链：提交 `72ce2d0` → CI run `38064786540` 65/65 jobs success → assets `fb07a16`（8 资产）→ registry `712cfc6`（version 0.9.26）→ prune `c37fea5`（删除 0.9.25 旧资产）→ 文档 `20e6b01`；远端 7 平台 zip sha256 全等、0.9.25/0.9.24 资产 404。
-  - 生产部署与验收：`plugin-store install qoderwork-provider?version=0.9.26` 返回 `installed`（`restart_required:false`），落盘 `.so` sha256 `53a909b0e84bc70483db55ee94bfb928345eb3bdc0eacce4f60f396aa0fd29c1` 与本地 zip 内 `.so` 完全一致；日志 `plugin loaded/registered version=0.9.26`；`/panel`、`/accounts` 200；行为验收生产账号 `u09a5b6ab`（auth_index `6a155a864014ffd8`）调用 `/checkin` 返回 `success:false` + 真实上游 `http 409 AlreadyExists`（summary fail:1），由「假成功 success:true」变为如实透传上游真实状态，缺陷已修。文档：`doc/4-bugs/2026-10-10_233000_QoderWork签到假成功.md`、`doc/5-tests/2026-10-10_234000_QoderWork签到假成功修复回归.md`、`doc/3-实施/2026-10-10_QoderWork签到假成功修复实施总览.md`。
-
-- 当前会话（2026-10-10）：**Qoder AI 国际版官方客户端模型对齐、管理面板测试按钮与定时探活、高清图标补齐及 0.1.1 正式发布部署**：
-  - 用户反馈与诉求：
-    1. 插件模型名称与 Qoder 官方客户端不一致，需核实是否缺少动态获取与真实模型映射；
-    2. 缺少管理面板「测试」按钮与指定模型测试能力（对齐 WorkBuddy 的手动点选测试与后台自动定时探活）；
-    3. 缺少官方图标（原外部 URL 带空格且 404）。
-    4. 指令：“发布 继续”。
-  - 核心实施要点：
-    1. **模型对齐与动态获取**：从本地 Qoder 官方权威配置（`D:\Qoder\resources\dynamic-text\qoder.json`）中核实 12 个真实模型与上游 key 映射（Cantus ↔ cmodel, Qwen3.8-Max ↔ qmodel_38max, Qwen3.8-Flash ↔ qfmodel, Qwen3.7-Max ↔ qmodel_latest, Qwen3.7-Plus ↔ qmodel, GLM-5.3 ↔ gmodel, GLM-5.3-Flash ↔ gfmodel, Kimi-K3 ↔ kmodel_latest, Kimi-K2.8-Preview ↔ kmodel, DeepSeek-V4-Pro ↔ dmodel, DeepSeek-Flash ↔ dfmodel, MiniMax-M3 ↔ mmodel），上下文基线统一至 1,000,000；在 `body.go` 中实现全量大小写不敏感映射；在 `models.go` 中实现 `defaultModelAliasMap` 与 `authModelsForIndex` 动态获取失败时的优雅兜底。
-    2. **测试按钮与自动定时探活**：在 `panel.html` 中补齐卡片「测试」按钮（`data-action="test"`）与模态框 `testModal`，支持手动点选模型实时推理测试；在 `active_ping.go` 与 `refresh_runner.go` 中打通多模型随机自动定时探活（带 30 分钟节流、30 秒熔断与最多 5 个模型轮测）。
-    3. **官方高清图标补齐**：从官方应用提取 1024×1024 PNG 至 `assets/icons/QoderAI.png`，更新 `main.go` 的 `pluginLogoURL` 与 `registry.json`，解决 404。
-  - 完整闭环发布验证：
-    1. 本地 `python scripts/cgo-shim-build.py qoder-ai` 编译、vet 与测试全部通过（all green）。
-    2. 严格隔离工作树中无关文件，显式提交 `qoder-ai/` 源码、高清图标并推送至 main（commit 7d7aa20）。
-    3. 触发 GitHub Actions 发布流水线（run 37975839198），轮询等待 65 个 jobs 全绿构建完成。
-    4. 下载 8 个 release 资产并校验 sha256 全部通过，运行 `publish-assets.py qoder-ai-provider 0.1.1` 更新 `registry.json`，清理历史版本资产并推送（commit 57eff44）。
-    5. 远端验证 raw URL 全部 200 OK（图标与 7 平台安装包）。
-    6. 生产环境（45.207.222.65）调用 plugin-store 安装 0.1.1 成功，热重载日志确认 `active ping success`；调用 `/models` 成功返回 12+1 个模型列表；调用 `/test-active` 对真实账号测试 `auto`、`Qwen3.8-Max`、`Cantus`、`DeepSeek-V4-Pro`、`GLM-5.3`、`Kimi-K3`、`MiniMax-M3` 均返回 `ok: true` 活跃成功！
-
-- 当前会话（2026-10-10）：**qoderwork-provider 测试按钮改造为「先选模型再测试」，并发布部署 0.9.23**。
-  - 用户诉求：qoderwork-provider 的测试也改造一下（对齐 workbuddy / workbuddy-ai / traework 三插件），改造完成提交并发布部署。
-  - 后端：qoderwork/models.go 新增 authModelsForIndex(authIndex) + handleModelsQuery(req)（cachedDynamicModels → callModelsAPI，AccessToken 非空前置判断）；management.go 新增只读 GET /models?auth_index= 路由（未进 mutatingManagementPath）与 /test-active 分支；active_ping.go 新增 pickRandomQoderModels / pickRandomQoderModel / sendActivePingQoder / handleTestActive / handleTestActiveWithAuth(sa, authIndex, model)，指定模型时透传、为空时随机（兼容旧面板），兜底模型 "auto"。
-  - 前端：qoderwork/panel.html 新增测试弹窗 testModal + 6 个 JS 函数（pendingTestAuthIndex / openTestModal / closeTestModal / onTestMaskClick / loadTestModels / runTestModel）、卡片按钮 data-action="test"、7 条 CSS（.import-result / .r-* / .model-list / .model-item），Escape 处理补 testModal。
-  - 本地验证：cgo-shim build/vet/test 全绿（ok 7.249s）+ 必失败哨兵确证真实进编译（sentinel expects a fake model, got "auto"）；Node vm 面板回归 17 项 PASS + 旧版反证 5 项 FAIL（TypeError: ctx.openTestModal is not a function）；6-review STYLE: PASS。
-  - 发布闭环：commit 7df7f9a（13 文件，+1115 行）→ push main → CI run 37964833825 success（head=7df7f9a）→ 资产 commit 7f18e2a（8 文件，7/7 sha256 OK）→ registry 0.9.23 回填（随 30dfe9b 推送，7 artifacts sha256+size 与 checksums 全等）→ 远端 raw 7/7 200 且 size 一致；validate-registry.py 8 插件 schema_version=2 通过。
-  - 生产部署与验收：plugin-store install 0.9.23 → installed；落盘 .so sha256 bb55d2df…3977 与本地 release zip 内 .so 完全一致；热重载 active_version=0.9.23 retired_version=0.9.22；行为验收 GET /models?auth_index= 返回 {"models":["auto"]}、POST /test-active 指定 model=auto 成功（421ms，回显该 model）、无 model 兼容随机路径成功（622ms）、无 auth_index 返回 auth_index is required、panel / accounts 200、面板资源含 testModal / openTestModal / loadTestModels / runTestModel / data-action="test" 全命中。
-  - **本轮关键踩坑（共享源原子性）**：部署期间生产自定义源被另一并行会话的半成品条目（qoder-ai-provider，`type: direct` + 空 artifacts）整体校验失败，`source_errors: plugins[7]: direct install requires at least one artifact`，导致该源下**全部**自定义插件 install 返回 plugin_not_found；根因是宿主 ParseRegistry 对「单源一份 registry」原子校验，任一条目非法即整源不入列。待对端补齐 artifacts 后源自动恢复，无需重启宿主、无需重发本插件 registry。已沉淀知识库《插件商店源级 registry 校验原子失败会让整源插件集体 plugin_not_found》。
-  - 发布后清理：prune-release-assets dry-run 确认 8 插件保留集完整（含 qoderwork-provider-0.9.23），待删 0。
-
-- 当前会话（2026-10-10）：**独立国际版 Qoder AI 插件全套代码实现、验证全绿与生态接入（qoder-ai-provider 0.1.0）**。
-  - 用户诉求：对标 workbuddy-ai-provider 独立国际版架构，构建独立的 Qoder AI 国际版插件，支持国际站（qoder.com）每日签到给 100 积分功能与多账号管理。
-  - 调研与端点实测（2026-10-10）：
-    1. 域名与网关确认：qoder.ai 308 重定向至 https://qoder.com；国际站 OpenAPI 统一基地址为 https://openapi.qoder.sh；
-    2. 关键业务端点在线实测：/sash/api/v1/me/daily-check-in/status 与 /claim、/api/v2/quota/usage、/api/v2/user/plan、/api/v1/deviceToken/* 均通过 curl 真实响应证实路由 100% 存活；
-    3. 推理与模型同网关：openapi.qoder.sh 同步挂载 /algo/api/v2/model/list 与 /algo/api/v2/service/pro/sse/agent_chat_generation，完全复用 COSY 签名 + QoderEncoding + SSE 转发链路。
-  - 代码实现（qoder-ai/）：
-    1. 独立工程骨架：插件 ID `qoder-ai-provider`，名称 `Qoder AI`，凭据文件规范 `qoderai-<uid>.json`（单账号兜底 `qoderai.json`），独立存储目录 `qoderai_accounts`；
-    2. 核心功能闭环：OAuth 设备授权流（PKCE + nonce + 官方 Client ID）、PAT 导入、Token 自动保活；每日签到（每次 100 积分）+ 4 小时后台定时轮询 + 单账号并发防重锁 + 批量签到；动态模型拉取与静态 fallback；指定模型探活测试（authModelsForIndex + handleTestActiveWithAuth）；
-    3. 专属管理控制台：定制 qoder-ai/panel.html，管理路径挂载在 /v0/management/plugins/qoder-ai-provider，两段内嵌 script 通过 Node 语法验证；
-  - 生态基础设施集成：
-    1. 用量归一化：token-usage-tracker/usage_stats/auth_identity.go 增加 Qoder AI 供应商映射；
-    2. CI/CD 流水线：.github/workflows/build.yml 增加 qoder-ai-provider-v* 触发器、dispatch 选项及 7 平台构建矩阵；
-    3. 插件注册表：registry.json 登记 qoder-ai-provider 0.1.0 元数据并通过 validate-registry.py 校验；
-  - 验证与门禁全绿：
-    1. cgo-shim-build.py qoder-ai：build / vet / test 全绿；
-    2. 哨兵失败拦截反证：qoder_ai_endpoints_test.go 临时插入 SENTINEL_FAILURE 证实真实进入编译测试，恢复后复测全绿；
-    3. 跨插件防破坏验证：qoderwork、workbuddy-ai、token-usage-tracker 跑 cgo-shim-build 全绿；
-    4. 6-review：STYLE: PASS，实施总览已归档落盘。
-  - 发布闭环与生产热部署（2026-10-10）：
-    1. 代码提交：commit 30dfe9b（71 文件）推送到 main；
-    2. CI 流水线：run 37966644012（head=30dfe9b）全 65 jobs success（含 8 插件测试与 7 平台构建矩阵）；
-    3. Release 资产：下载 8 资产（7 zip + checksums）校验 ALL OK，commit a2e5252 推送 main；
-    4. 注册表回填：publish-assets.py 同步 7 平台 artifacts sha256 与 size，commit d124fa0 推送 main；
-    5. 远端验证：raw.githubusercontent.com 7 平台资产 size 与 sha256 ALL PASS；
-    6. 生产热重载部署：plugin-store install qoder-ai-provider 0.1.0 成功 installed；生产落盘 .so sha256（6363aacc8a72cf304a450e6cc1430a0b5f716615906e764eb95f443278c411a7）与本地 zip 100% 精确一致；
-    7. 生产接口验收：/v0/management/plugins/qoder-ai-provider/accounts 200，/v0/resource/plugins/qoder-ai-provider/panel 200，日志确认挂载热重载生效；
-    8. 发布后清理：prune-release-assets dry-run 确认 8 插件版本保留集完整，无历史冗余资产。
-
-- 当前会话（2026-10-09）：**三插件测试按钮改为弹出模型选择窗口按指定模型测试（workbuddy 0.15.4 / workbuddy-ai 0.1.9 / traework 0.2.3）**。
-  - 用户诉求：三插件面板卡片「测试」按钮原本随机挑一个模型直接测，改为点击后弹出该账号支持的模型小窗口，点选指定模型再测。
-  - 后端：三插件 models.go 新增 authModelsForIndex + handleModelsQuery；active_ping.go 的 handleTestActiveWithAuth(sa, authIndex, model) 支持指定模型（model 为空保持随机，兼容旧面板）；management.go 新增只读 GET /models?auth_index= 路由。
-  - 前端：三插件 panel.html 新增测试弹窗（openTestModal / loadTestModels / runTestModel），testActive 改为先弹窗选模型；无模型时提示「暂无可用模型」并允许关闭。
-  - 本地验证：cgo-shim 三插件 build/vet/test 全绿 + 必失败哨兵确证真实进编译；三面板 Node vm 回归各 17 项 PASS + 旧版反证 FAIL；6-review STYLE: PASS。
-  - 发布闭环：commit ce6b4e2（32 文件）→ CI 三 run success（37940758486 / 37940778484 / 37940786472，head=ce6b4e2）→ 资产 commit fe5742d（24 文件，三目录 7/7 sha256 OK）→ registry 回填 commit 207e22c → prune 旧版 commit ada831f；远端 49/49 当前资产 200、旧版（0.15.3 / 0.1.8 / 0.2.2）404。
-  - 生产部署：三插件 plugin-store install 全部 installed；落盘 .so sha256 与本地 zip 完全一致（workbuddy 0.15.4 9c3b85b6… / workbuddy-ai 0.1.9 dd77aab4… / traework 0.2.3 2d671e16…）；热重载 active_version 命中目标版本；panel / accounts 三插件全 200。
-  - 生产行为验收：/models 三插件返回真实模型（17 / 27 / 大量）；缺 auth_index 返回 auth_index is required；/test-active 指定 deepseek-v4.1-flash → traework 成功（1.625s，回显该 model），workbuddy 因额度 429 但错误文案确认使用指定模型。
+  - 核心排查与根因：`deviceIDFor` 拼接 `-userID` 破坏 16 位纯数字契约导致 9074 拦截；`randomDeviceID` 补零造成畸形设备号；`checkinAccount` 遇拦截未轮换设备号。
+  - 修复验收：确定性 16 位设备号派生与轮换重试机制；本地 cgo-shim 全绿与哨兵反证；CI 64 jobs 成功，生产部署 0.2.5 并验证多账号签到成功。
 
 <!-- BEGIN RECENT PROJECT SESSIONS -->
 ## 最近 5 个同项目会话
