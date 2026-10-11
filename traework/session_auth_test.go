@@ -429,3 +429,16 @@ func mustSchedulerPick(t *testing.T, req pluginapi.SchedulerPickRequest) []byte 
 	}
 	return raw
 }
+
+// TestSchedulerMode_DefaultIsSession 验证 traework 默认调度模式为 session，与 workbuddy 基线对齐。
+// 最近修改时间：2026-10-11 批次 A 默认会话路由对齐
+func TestSchedulerMode_DefaultIsSession(t *testing.T) {
+	if mode := loadedSchedulerMode(); mode != schedulerModeSession {
+		t.Fatalf("loadedSchedulerMode() = %q, want %q", mode, schedulerModeSession)
+	}
+	cfg := defaultTraeConfig()
+	if cfg.SchedulerMode != schedulerModeSession {
+		t.Fatalf("defaultTraeConfig().SchedulerMode = %q, want %q", cfg.SchedulerMode, schedulerModeSession)
+	}
+}
+

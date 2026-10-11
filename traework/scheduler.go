@@ -25,7 +25,7 @@ import (
 )
 
 var (
-	schedulerMode   = schedulerModeOff
+	schedulerMode   = schedulerModeSession
 	schedulerModeMu sync.RWMutex
 )
 

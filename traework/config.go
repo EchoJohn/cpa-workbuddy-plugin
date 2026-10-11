@@ -76,7 +76,7 @@ func defaultTraeConfig() *traeConfig {
 		DeviceModel:   defaultDeviceModel,
 		OSName:        defaultOSName,
 		OSVersion:     defaultOSVersion,
-		SchedulerMode: schedulerModeOff,
+		SchedulerMode: schedulerModeSession,
 		CheckinAuto:   defaultCheckinAuto,
 	}
 }
@@ -173,6 +173,7 @@ func applyConfigLines(cfg *traeConfig, lines []string) {
 			v := strings.TrimSpace(val)
 			if v == schedulerModeOff || v == schedulerModeCredits || v == schedulerModeSession {
 				cfg.SchedulerMode = v
+				setSchedulerMode(v)
 			} else {
 				log.Printf("[traework] config: ignored invalid scheduler_mode %q", v)
 			}
