@@ -22,14 +22,25 @@ func billingHeaders(req *http.Request, sa *storedAuth) {
 	req.Header.Set("Content-Type", "application/json")
 }
 
-// campaignHeaders adds the international-client headers the campaigns API
-// requires. Without Cosy-ClientType the list comes back empty
-// (showCampaign:false, campaigns:[]) even for accounts that do have an active
-// activity — verified live 2026-10-11 against openapi.qoder.sh.
+// campaignHeaders 注入国际版客户端请求活动接口所需的完整 Cosy-* 与设备标识请求头。
+// [参数] req: 待发送的 HTTP 请求；sa: 目标账号认证信息。
+// [返回] 无。
+// 最近修改时间：2026-10-11 14:58:00 补齐按账号隔离的 UMID 机器标识头
 func campaignHeaders(req *http.Request, sa *storedAuth) {
+	// 1. 设置基础 Bearer 鉴权与客户端类型版本头
 	billingHeaders(req, sa)
 	req.Header.Set("Cosy-ClientType", "10")
+	req.Header.Set("Cosy-Version", qoderClientVer)
 	req.Header.Set("User-Agent", "Qoder")
+	// 2. 注入当前账号绑定的独立 UMID 设备指纹头
+	if id, err := resolveAccountUMID(sa); err == nil && id != nil {
+		req.Header.Set("Cosy-MachineOS", id.MachineOS)
+		req.Header.Set("Cosy-MachineHostname", id.MachineHostname)
+		req.Header.Set("Cosy-MachineId", id.MachineID)
+		req.Header.Set("Cosy-MachineToken", id.MachineToken)
+		req.Header.Set("Cosy-MachineCode", id.MachineCode)
+		req.Header.Set("Cosy-MachineType", id.MachineType)
+	}
 }
 
 // campaignStatusResponse mirrors GET /sash/api/v1/me/campaigns (plain JSON).
@@ -210,47 +221,61 @@ func fetchPaymentType(sa *storedAuth) string {
 	return p.UserType
 }
 
-// performCheckinCall 调用国际版活动领取接口（campaigns claim）。
+// performCheckinCall 调用国际版活动领取接口并在设备冲突时轮换 UMID 重试。
 // [参数] sa: 目标账号的落盘认证信息；campaignID: 待领取活动的 campaignId。
 // [返回] 面板使用的 success 布尔语义响应 map；响应非法时返回错误。
-// 最近修改时间：2026-10-11；改动原因：国际版签到改走 campaigns claim（原 CN daily-check-in 端点 404）
+// 最近修改时间：2026-10-11 14:58:00 支持设备冲突自动轮换 UMID 重试与错误码透传
 func performCheckinCall(sa *storedAuth, campaignID string) (map[string]any, error) {
+	// 1. 校验活动标识非空
 	if campaignID == "" {
 		return map[string]any{"success": false, "message": "no claimable check-in campaign"}, nil
 	}
-	req, err := http.NewRequest(http.MethodPost, endpointCampaignClaim+campaignID+"/claim", strings.NewReader("{}"))
-	if err != nil {
-		return nil, err
-	}
-	campaignHeaders(req, sa)
-	resp, err := hostHTTPDo(req)
-	if err != nil {
-		return map[string]any{"success": false, "message": err.Error()}, nil
-	}
-	if resp.StatusCode >= 400 {
-		return map[string]any{"success": false, "message": fmt.Sprintf("http %d: %s", resp.StatusCode, truncateRedacted(string(resp.Body), 200))}, nil
-	}
-	var m map[string]any
-	if err := json.Unmarshal(resp.Body, &m); err != nil {
-		return nil, err
-	}
-	// 国际版 claim 返回 {"grantId":..,"status":"CLAIMED","replayed":bool,
-	// "benefit":{"kind":"CREDITS","amount":100,...},"campaignId":..}。
-	// status=CLAIMED 视为成功（replayed=true 表示本轮已领过）。
-	status, _ := m["status"].(string)
-	if status != "CLAIMED" {
-		return map[string]any{"success": false, "message": fmt.Sprintf("unexpected claim status: %v", m["status"])}, nil
-	}
-	out := map[string]any{"success": true, "result": status}
-	if b, ok := m["benefit"].(map[string]any); ok {
-		if amt, ok := b["amount"].(float64); ok {
-			out["rewardCredits"] = int64(amt)
+	// 2. 发起领取请求，若命中同设备限制则轮换 UMID 标识重试
+	var lastStatus string
+	var lastFailure string
+	for attempt := 0; attempt < 3; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, endpointCampaignClaim+campaignID+"/claim", strings.NewReader("{}"))
+		if err != nil {
+			return nil, err
 		}
+		campaignHeaders(req, sa)
+		resp, err := hostHTTPDo(req)
+		if err != nil {
+			return map[string]any{"success": false, "message": err.Error()}, nil
+		}
+		if resp.StatusCode >= 400 {
+			return map[string]any{"success": false, "message": fmt.Sprintf("http %d: %s", resp.StatusCode, truncateRedacted(string(resp.Body), 200))}, nil
+		}
+		var m map[string]any
+		if err := json.Unmarshal(resp.Body, &m); err != nil {
+			return nil, err
+		}
+		status, _ := m["status"].(string)
+		failureCode, _ := m["failureCode"].(string)
+		if status == "CLAIMED" {
+			out := map[string]any{"success": true, "result": status}
+			if b, ok := m["benefit"].(map[string]any); ok {
+				if amt, ok := b["amount"].(float64); ok {
+					out["rewardCredits"] = int64(amt)
+				}
+			}
+			if replayed, ok := m["replayed"].(bool); ok && replayed {
+				out["already"] = true
+			}
+			return out, nil
+		}
+		lastStatus = status
+		lastFailure = failureCode
+		if failureCode == "SAME_PERSON_ALREADY_CLAIMED" && attempt < 2 {
+			_, _ = rotateAccountUMID(sa)
+			continue
+		}
+		break
 	}
-	if replayed, ok := m["replayed"].(bool); ok && replayed {
-		out["already"] = true
+	if lastFailure != "" {
+		return map[string]any{"success": false, "message": fmt.Sprintf("claim %s: %s", lastStatus, lastFailure)}, nil
 	}
-	return out, nil
+	return map[string]any{"success": false, "message": fmt.Sprintf("unexpected claim status: %s", lastStatus)}, nil
 }
 
 // isCreditsExhausted is the shared "耗尽" definition for panel + scheduler.

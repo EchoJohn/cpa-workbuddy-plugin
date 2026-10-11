@@ -251,9 +251,12 @@ func handleManualCheckin(req pluginapi.ManagementRequest) map[string]any {
 	}
 }
 
-// checkinOneAccount performs the actual GET status + POST claim flow for one
-// account. 8s overall budget — never blocks past that.
+// checkinOneAccount 对单个账号执行签到状态查询、活动领取与本地缓存同步。
+// [参数] f: 宿主认证文件条目。
+// [返回] 单账号签到结果响应 map。
+// 最近修改时间：2026-10-11 14:58:00 同步刷新 accountCache 签到与积分快照并修复奖励积分类型断言
 func checkinOneAccount(f pluginapi.HostAuthFileEntry) map[string]any {
+	// 1. 加单账号互斥锁并读取账号凭据
 	out := map[string]any{
 		"auth_index": f.AuthIndex,
 		"name":       f.Name,
@@ -269,13 +272,14 @@ func checkinOneAccount(f pluginapi.HostAuthFileEntry) map[string]any {
 	}
 	out["nickname"] = sa.Account.Nickname
 
-	// Step 1: GET status (5s budget).
+	// 2. 查询当前签到活动状态并处理已签或无活动分支
 	ci, err := fetchCheckinStatus(sa)
 	if err != nil {
 		out["error"] = "status: " + err.Error()
 		return out
 	}
 	if ci.TodayCheckedIn {
+		updateAccountCacheSnapshot(f.ID, accountCacheEntry{checkin: ci})
 		out["success"] = true
 		out["skipped"] = true
 		out["reason"] = "already"
@@ -285,20 +289,19 @@ func checkinOneAccount(f pluginapi.HostAuthFileEntry) map[string]any {
 		return out
 	}
 	if !ci.Active {
+		updateAccountCacheSnapshot(f.ID, accountCacheEntry{checkin: ci})
 		out["success"] = false
 		out["reason"] = "global"
 		out["message"] = "当前无可领取的签到活动"
 		return out
 	}
 
-	// Step 2: POST campaign claim (5s budget).
+	// 3. 调用活动领取接口并在成功后同步刷新积分与缓存快照
 	res, err := performCheckinCall(sa, ci.CampaignID)
 	if err != nil {
 		out["error"] = "claim: " + err.Error()
 		return out
 	}
-	// 国际版 claim 返回 status=CLAIMED + replayed=true 表示本轮已领过，
-	// 归一为 already 而非失败。
 	if success, _ := res["success"].(bool); success {
 		out["success"] = true
 		if already, _ := res["already"].(bool); already {
@@ -308,20 +311,62 @@ func checkinOneAccount(f pluginapi.HostAuthFileEntry) map[string]any {
 		} else {
 			out["message"] = "签到成功"
 		}
-		if rc, ok := res["rewardCredits"].(float64); ok {
-			out["reward_credits"] = int64(rc)
+		if rc, ok := res["rewardCredits"].(int64); ok {
+			out["reward_credits"] = rc
+		} else if rcFloat, ok := res["rewardCredits"].(float64); ok {
+			out["reward_credits"] = int64(rcFloat)
+		} else if ci.DailyCredit > 0 {
+			out["reward_credits"] = ci.DailyCredit
 		}
-		// Refresh the credits snapshot so the panel shows the post-checkin
-		// balance immediately (check-in grants new credits). Best-effort:
-		// a failure here must not flip the check-in result to error.
-		if cr, crErr := fetchUserResource(sa); crErr == nil && cr != nil {
+		ci.TodayCheckedIn = true
+		ci.TodayCredit = ci.DailyCredit
+		if ci.StreakDays == 0 {
+			ci.StreakDays = 1
+		}
+		if ci2, ciErr := fetchCheckinStatus(sa); ciErr == nil && ci2 != nil && ci2.TodayCheckedIn {
+			ci = ci2
+		}
+		var cr *creditsSummary
+		if crFetched, crErr := fetchUserResource(sa); crErr == nil && crFetched != nil {
+			cr = crFetched
 			out["credits"] = cr
 		}
+		updateAccountCacheSnapshot(f.ID, accountCacheEntry{checkin: ci, credits: cr})
 		return out
 	}
 	out["success"] = false
 	out["message"] = res
 	return out
+}
+
+// updateAccountCacheSnapshot 将最新的签到或积分快照合并写入 accountCache。
+// [参数] authID: 宿主账号 ID；patch: 待合并的签到与积分缓存字段。
+// [返回] 无。
+// 最近修改时间：2026-10-11 15:05:00 收敛参数为双参数结构体形态
+func updateAccountCacheSnapshot(authID string, patch accountCacheEntry) {
+	// 1. 读取既有缓存条目并合并非空字段后写回
+	if authID == "" {
+		return
+	}
+	var prev *accountCacheEntry
+	if v, ok := accountCache.Load(authID); ok {
+		prev, _ = v.(*accountCacheEntry)
+	}
+	now := time.Now()
+	entry := &accountCacheEntry{fetched: now}
+	if prev != nil {
+		entry.checkin = prev.checkin
+		entry.credits = prev.credits
+		entry.plan = prev.plan
+	}
+	if patch.checkin != nil {
+		entry.checkin = patch.checkin
+	}
+	if patch.credits != nil {
+		patch.credits.FetchedAt = now.UTC().Format(time.RFC3339)
+		entry.credits = patch.credits
+	}
+	accountCache.Store(authID, entry)
 }
 
 func checkinLockFor(authIndex string) *sync.Mutex {

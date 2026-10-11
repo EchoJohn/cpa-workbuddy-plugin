@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -105,3 +106,87 @@ func TestPickCheckinCampaign_NoCampaign(t *testing.T) {
 		t.Fatalf("want all zero for empty campaigns; got active=%v checked=%v cid=%q credit=%d", active, checked, cid, credit)
 	}
 }
+
+// TestDeriveUMIDCodes_GoldenParity 验证 deriveUMIDCodes 与官方 runtime-info 二进制实测样本逐字符一致，防 xxh64 或位插值偏移，无副作用。
+func TestDeriveUMIDCodes_GoldenParity(t *testing.T) {
+	// 1. 校验 Windows 实测样本（vmCode=14, pct=77）
+	winToken := "P1gArIgCgHLNfpZ2s8k6Ns0cOmaAAacODyke6bidFVndFvh_-SI_Etjx2D2Hea6fsE2E4hSkFDet8bxb_HNMaZab"
+	winCodes := deriveUMIDCodes(umidDeriveInput{MachineToken: winToken, VMCode: 14, Pct: 77})
+	if winCodes.MachineType != "51f6feff14f099a261" {
+		t.Fatalf("mTypeWin=%q; want 51f6feff14f099a261", winCodes.MachineType)
+	}
+	if winCodes.MachineCode != "1c06e2fa7691148402" {
+		t.Fatalf("mCodeWin=%q; want 1c06e2fa7691148402", winCodes.MachineCode)
+	}
+	// 2. 校验 Linux 实测样本（vmCode=91, pct=0）
+	linToken := "P1gApdVL9Wb9zzWpUqwS0F-9U6ZyrPo4q7CJDsUxC0YurygCnQY5Fif0m5qGrb_S6WvCtTPTCFTZcFQR8sd8N_47"
+	linCodes := deriveUMIDCodes(umidDeriveInput{MachineToken: linToken, VMCode: 91, Pct: 0})
+	if linCodes.MachineType != "9698528191ba3fcff5" {
+		t.Fatalf("mTypeLin=%q; want 9698528191ba3fcff5", linCodes.MachineType)
+	}
+	if linCodes.MachineCode != "a0d07094007ade534b" {
+		t.Fatalf("mCodeLin=%q; want a0d07094007ade534b", linCodes.MachineCode)
+	}
+}
+
+// TestDecryptUMIDResponseDT_GoldenSample 验证 UMID 响应 dt 解密能够还原真实 P1gA 令牌，防密钥表或 CBC 解密漂移，无副作用。
+func TestDecryptUMIDResponseDT_GoldenSample(t *testing.T) {
+	dtSample := "CuzZqBuG25Skd+agWO6iNFya1P5vBqkvigEjqXiJZTh3zFcOuLWWyI2ku0TZYoiy5MPkEa0FGT4BvvNoh9hA5K2TkhjQvSn+N1dh5Ph95tQXXip3Pen5+HV/7cMc+eW75hq+xi3lDEwrg6rD8jhhG/s="
+	wantToken := "P1gAyGUvqyAFif6i1bwrTu-DuqZuAYTM3s-17fy1MFe8k_zOs6c6ST6wnUZbvdQFK-mXcBCDvCtED485o8TJFC_t"
+	got, err := decryptUMIDResponseDT(dtSample)
+	if err != nil {
+		t.Fatalf("decryptUMIDResponseDT err: %v", err)
+	}
+	if got != wantToken {
+		t.Fatalf("got=%q; want %q", got, wantToken)
+	}
+}
+
+// TestCampaignHeaders_InjectsMachineIdentity 验证 campaignHeaders 正确注入完整 Cosy-* 设备标识头，防缺头导致上游隐藏每日签到活动，无外部副作用。
+func TestCampaignHeaders_InjectsMachineIdentity(t *testing.T) {
+	uid := "unit-test-uid-001"
+	token := "P1gAyGUvqyAFif6i1bwrTu-DuqZuAYTM3s-17fy1MFe8k_zOs6c6ST6wnUZbvdQFK-mXcBCDvCtED485o8TJFC_t"
+	codes := deriveUMIDCodes(umidDeriveInput{MachineToken: token, VMCode: 91, Pct: 0})
+	umidCache.Store(uid, &umidCacheEntry{
+		identity: umidIdentity{
+			MachineID:       "11111111-2222-3333-4444-555555555555",
+			MachineHostname: "qoder-test-host",
+			MachineOS:       "x86_64_linux",
+			MachineToken:    token,
+			MachineType:     codes.MachineType,
+			MachineCode:     codes.MachineCode,
+		},
+		salt:      0,
+		fetchedAt: time.Now(),
+	})
+	defer umidCache.Delete(uid)
+
+	sa := &storedAuth{
+		Auth:    storedTokens{AccessToken: "jt-test-token"},
+		Account: storedAccount{UID: uid},
+	}
+	req, err := http.NewRequest(http.MethodGet, endpointCampaigns, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	campaignHeaders(req, sa)
+	if got := req.Header.Get("Cosy-ClientType"); got != "10" {
+		t.Fatalf("Cosy-ClientType=%q; want 10", got)
+	}
+	if got := req.Header.Get("Cosy-Version"); got != qoderClientVer {
+		t.Fatalf("Cosy-Version=%q; want %q", got, qoderClientVer)
+	}
+	if got := req.Header.Get("Cosy-MachineToken"); got != token {
+		t.Fatalf("Cosy-MachineToken=%q; want %q", got, token)
+	}
+	if got := req.Header.Get("Cosy-MachineType"); got != codes.MachineType {
+		t.Fatalf("Cosy-MachineType=%q; want %q", got, codes.MachineType)
+	}
+	if got := req.Header.Get("Cosy-MachineCode"); got != codes.MachineCode {
+		t.Fatalf("Cosy-MachineCode=%q; want %q", got, codes.MachineCode)
+	}
+	if got := req.Header.Get("Cosy-MachineId"); got != "11111111-2222-3333-4444-555555555555" {
+		t.Fatalf("Cosy-MachineId=%q; want 11111111-2222-3333-4444-555555555555", got)
+	}
+}
+

@@ -1,5 +1,15 @@
 # Qoder AI Plugin Changelog
 
+## 0.1.6
+
+### Fix - 补齐国际版签到 UMID 机器标识头与多账号设备指纹隔离，解决客户端可签但插件无活动且积分不增加
+
+- 变更要点:
+  1. 根因：国际版 `GET /sash/api/v1/me/campaigns` 与 `POST .../claim` 除校验 `Cosy-ClientType: 10` 外，还强制校验 `Cosy-MachineToken`（`P1gA...` UMID 令牌）与 `Cosy-MachineType`（由 `xxh64(machineToken)` 插值 `vmTypeCode` 派生）；缺少这两个头部时，上游在每日 10:00 (UTC+8) 刷新后仅返回宣传类 `VIEW_DETAILS` 活动而隐藏 `CLAIM_BENEFIT`（每日领 100 Credits）活动，导致全部生产账号被判为 `active: false`。同时，若多个账号共用同一设备的 UMID 令牌，第二个起会被上游拦截返回 `status=BLOCKED, failureCode=SAME_PERSON_ALREADY_CLAIMED`。
+  2. 修复：新增纯 Go 实现的 `umid.go` / `umid_codec.go` / `umid_crypto.go`，按账号 `UID` 确定性派生独立虚拟网卡 MAC 与主机特征，向 `us-pum.alibabachengdun.com/repPc.json` 获取官方签发的独立 `P1gA...` `machineToken` 并缓存，按 `xxh64` 派生 `Cosy-MachineType` 与 `Cosy-MachineCode`；`campaignHeaders` 注入完整 `Cosy-*` 头部；`performCheckinCall` 遇 `SAME_PERSON_ALREADY_CLAIMED` 时自动递增盐值轮换新设备标识重试。
+  3. 缓存与奖励字段修复：`checkinOneAccount` 兼容 `int64` / `float64` 提取 `rewardCredits`，并在签到完成后立即通过 `updateAccountCacheSnapshot` 刷新 `accountCache` 中的签到与积分快照。
+- 涉及文件: qoder-ai/umid.go、qoder-ai/umid_codec.go、qoder-ai/umid_crypto.go、qoder-ai/billing.go、qoder-ai/checkin.go、qoder-ai/qoder_ai_endpoints_test.go、qoder-ai/VERSION、qoder-ai/main.go
+
 ## 0.1.5
 
 ### Fix - 批量签到统计把「无活动」账号误计为失败
