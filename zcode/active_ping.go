@@ -86,18 +86,24 @@ func handleTestActive(body []byte) ([]byte, error) {
 // handleTestActiveWithAuth 向上游发起单次 Anthropic 流式首包即停真实探活。
 // [参数] sa: ZCode 账号凭据；model: 待测试模型名称。
 // [返回] testActiveResponse: 探活状态、耗时与结果消息。
-// 最近修改时间：2026-10-11 22:35:00 改为 stream=true + max_tokens=1 首包即停，消除 GLM-5.3 思考模型整段思维链等待
+// 最近修改时间：2026-10-12 00:20:00 改用业务令牌（zai access_token → business token），根治 OAuth 账号 401
 func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
-	if sa == nil || (sa.APIKey == "" && sa.Token == "") {
+	if sa == nil || (sa.APIKey == "" && sa.Token == "" && sa.AccessToken == "") {
 		return testActiveResponse{
 			OK:     false,
 			Status: "failed",
-			Error:  "invalid account or empty API key",
+			Error:  "invalid account or empty api key",
 		}
 	}
-	apiKey := sa.APIKey
+
+	// OAuth 账号须先把 zai access_token 换成业务令牌，直接使用 OAuth 令牌会被上游拒绝（401）。
+	apiKey := modelCredentialFor(sa)
 	if apiKey == "" {
-		apiKey = sa.Token
+		return testActiveResponse{
+			OK:     false,
+			Status: "failed",
+			Error:  "unable to resolve upstream credential (business token exchange failed)",
+		}
 	}
 
 	cfg := currentConfig()

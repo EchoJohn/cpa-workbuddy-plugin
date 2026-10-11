@@ -20,7 +20,7 @@ plugins:
   configs:
     zcode-provider:
       enabled: true
-      base_url: "https://open.bigmodel.cn/api/anthropic"
+      base_url: "https://api.z.ai/api/anthropic"
       dynamic_models: true
       model_cache_seconds: 300
       timeout_seconds: 300

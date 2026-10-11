@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -128,5 +131,114 @@ func TestAuthFile_ZaiAccount(t *testing.T) {
 	}
 	if list[0].Username != "张三" {
 		t.Fatalf("expected username 张三, got %s", list[0].Username)
+	}
+}
+
+// TestBusinessToken_ResolveAndCache 验证业务令牌换取与缓存命中。
+func TestBusinessToken_ResolveAndCache(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var req zaiBusinessLoginRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Token != "zai-access-1" {
+			http.Error(w, "bad token", http.StatusBadRequest)
+			return
+		}
+		resp := zaiBusinessLoginResponse{Code: 200}
+		resp.Data.AccessToken = "biz-token-abc"
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	mockZaiBusinessLoginURL = ts.URL
+	defer func() { mockZaiBusinessLoginURL = "" }()
+	businessTokenMu.Lock()
+	businessTokenCache = make(map[string]businessTokenCacheEntry)
+	businessTokenMu.Unlock()
+
+	got, err := resolveBusinessToken("zai-access-1")
+	if err != nil || got != "biz-token-abc" {
+		t.Fatalf("expected biz-token-abc, got %q err=%v", got, err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 upstream call, got %d", calls)
+	}
+
+	// 第二次应命中缓存，不再请求上游
+	if _, err2 := resolveBusinessToken("zai-access-1"); err2 != nil {
+		t.Fatalf("cached resolve failed: %v", err2)
+	}
+	if calls != 1 {
+		t.Fatalf("expected cached hit (still 1 call), got %d", calls)
+	}
+}
+
+// TestBusinessToken_Invalidate 验证缓存失效后重新换取。
+func TestBusinessToken_Invalidate(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		resp := zaiBusinessLoginResponse{Code: 200}
+		resp.Data.AccessToken = "biz-2"
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+	mockZaiBusinessLoginURL = ts.URL
+	defer func() { mockZaiBusinessLoginURL = "" }()
+	businessTokenMu.Lock()
+	businessTokenCache = make(map[string]businessTokenCacheEntry)
+	businessTokenMu.Unlock()
+
+	if _, err := resolveBusinessToken("zai-access-2"); err != nil {
+		t.Fatalf("first resolve failed: %v", err)
+	}
+	invalidateBusinessToken("zai-access-2")
+	if _, err := resolveBusinessToken("zai-access-2"); err != nil {
+		t.Fatalf("resolve after invalidate failed: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 upstream calls after invalidate, got %d", calls)
+	}
+}
+
+// TestBusinessToken_UpstreamFailure 验证上游失败时返回错误而非静默降级。
+func TestBusinessToken_UpstreamFailure(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"code":401,"msg":"bad"}`, http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+	mockZaiBusinessLoginURL = ts.URL
+	defer func() { mockZaiBusinessLoginURL = "" }()
+	businessTokenMu.Lock()
+	businessTokenCache = make(map[string]businessTokenCacheEntry)
+	businessTokenMu.Unlock()
+
+	if _, err := resolveBusinessToken("zai-access-3"); err == nil {
+		t.Fatalf("expected error on upstream failure")
+	}
+}
+
+// TestModelCredentialFor_Fallback 验证换取失败时回退到账号自身 Key。
+func TestModelCredentialFor_Fallback(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "down", http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+	mockZaiBusinessLoginURL = ts.URL
+	defer func() { mockZaiBusinessLoginURL = "" }()
+	businessTokenMu.Lock()
+	businessTokenCache = make(map[string]businessTokenCacheEntry)
+	businessTokenMu.Unlock()
+
+	sa := &StoredAuth{APIKey: "static-key-123", AccessToken: "zai-access-4"}
+	if got := modelCredentialFor(sa); got != "static-key-123" {
+		t.Fatalf("expected fallback to static key, got %q", got)
+	}
+
+	// 无 access_token 的静态账号直接使用自身 Key，不触发网络请求
+	staticOnly := &StoredAuth{APIKey: "static-only"}
+	if got := modelCredentialFor(staticOnly); got != "static-only" {
+		t.Fatalf("expected static key, got %q", got)
 	}
 }

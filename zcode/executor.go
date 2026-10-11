@@ -202,8 +202,14 @@ func prepareUpstreamRequest(ctx context.Context, payload []byte, sa *StoredAuth,
 		return nil, err
 	}
 
-	fp := mimic.New(cfg.Mimic, keyID(sa.APIKey))
-	fp.ApplyRequest(httpReq.Header, sa.APIKey, mimic.UUID4())
+	// OAuth 账号须先把 zai access_token 换成业务令牌；静态 API Key 账号直接复用自身 Key。
+	credential := modelCredentialFor(sa)
+	if credential == "" {
+		return nil, fmt.Errorf("no usable upstream credential for account %s", sa.AuthID)
+	}
+
+	fp := mimic.New(cfg.Mimic, keyID(credential))
+	fp.ApplyRequest(httpReq.Header, credential, mimic.UUID4())
 	return httpReq, nil
 }
 

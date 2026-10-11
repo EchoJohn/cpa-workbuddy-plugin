@@ -63,12 +63,15 @@ const (
 	providerName      = "zcode-provider"
 	pluginDisplayName = "ZCode Provider"
 	pluginLogoURL     = "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/assets/icons/ZCode.png"
-	defaultBaseURL    = "https://open.bigmodel.cn/api/anthropic"
+	// defaultBaseURL 对齐官方 zai-api 模板（zcode-builtin.json）：
+	// access.type=zhipu-coding-plan-api-key，api.baseUrl=https://api.z.ai/api/anthropic。
+	// OAuth 账号须先用 zai access_token 换取业务令牌，再以该地址发起模型请求。
+	defaultBaseURL = "https://api.z.ai/api/anthropic"
 )
 
 var (
 	// version 当前插件版本号。
-	version      = "0.1.8"
+	version      = "0.1.9"
 	hostAPI      *C.cliproxy_host_api
 	hostAPIMu    sync.RWMutex
 	activeConfig atomic.Value

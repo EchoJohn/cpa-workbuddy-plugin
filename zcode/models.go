@@ -63,8 +63,13 @@ func fetchUpstreamModels(ctx context.Context, apiKey string) ([]string, error) {
 		return append([]string(nil), defaultModels...), err
 	}
 
-	fp := mimic.New(cfg.Mimic, keyID(apiKey))
-	fp.ApplyRequest(req.Header, apiKey, mimic.UUID4())
+	// 统一走业务令牌解析：OAuth 账号换取 business token，静态 API Key 账号沿用自身 Key。
+	credential := modelCredentialFor(&StoredAuth{APIKey: apiKey})
+	if credential == "" {
+		credential = apiKey
+	}
+	fp := mimic.New(cfg.Mimic, keyID(credential))
+	fp.ApplyRequest(req.Header, credential, mimic.UUID4())
 
 	resp, err := modelHTTPClient.Do(req)
 	if err != nil {
