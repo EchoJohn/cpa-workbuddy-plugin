@@ -278,7 +278,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "0.2.5"
+var version = "0.2.6"
 
 func wbRegistration() registration {
 	return registration{
@@ -292,7 +292,7 @@ func wbRegistration() registration {
 			ConfigFields: []pluginapi.ConfigField{
 				{Name: "api_host", Type: pluginapi.ConfigFieldTypeString, Description: "上游 llm_utils_chat 服务地址（默认 https://trae-api-cn.mchost.guru）。"},
 				{Name: "app_id", Type: pluginapi.ConfigFieldTypeString, Description: "x-app-id 请求头取值（默认共享的 Trae 客户端 ID）。"},
-				{Name: "scheduler_mode", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{schedulerModeOff, schedulerModeCredits, schedulerModeSession}, Description: "多账号选择策略：off（交给内置逻辑，默认）、credits（插件按面板活跃账号选择健康账号）或 session（会话级粘性路由，同一会话固定同一账号 1 小时，失败自动换号）。"},
+				{Name: "scheduler_mode", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{schedulerModeSession, schedulerModeCredits, schedulerModeOff}, Description: "多账号选择策略：session（按会话轮询，同一会话 1 小时内固定同一账号；默认）／credits（插件按面板活跃账号选择健康账号）／off（交给内置逻辑）。"},
 				{Name: "checkin_auto", Type: pluginapi.ConfigFieldTypeBoolean, Description: "启用自动签到（每4小时一次，本地时间 00:00/04:00/08:00/12:00/16:00/20:00，默认开启）。"},
 				{Name: "models", Type: pluginapi.ConfigFieldTypeArray, Description: "可选模型列表。每个条目可为模型 id 字符串或 {id, name, ...} 对象；未配置时使用内置默认列表。"},
 				{Name: "retry_on_4xx", Type: pluginapi.ConfigFieldTypeString, Description: "账号级 4xx 时每次请求的换号重试预算（0-10，默认 10）。"},

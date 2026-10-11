@@ -1,5 +1,14 @@
 # Qoder AI Plugin Changelog
 
+## 0.1.8
+
+### Fix - 移除未授权自动认证成功的 Panel-import 假成功逻辑
+
+- 变更要点:
+  1. 根因：`oauth.go` 中的 `handlePollLogin` 包含一段历史遗留的 Panel-import 分支，扫描 `hostAuthList()` 中 `f.CreatedAt.UnixNano() > lc.startedAt` 的凭据直接判为登录成功；由于宿主文件 watcher 与后台 watchdog 每次刷新账号均会将 `f.CreatedAt` 赋值为 `time.Now()`，导致用户点击添加账号生成授权链接后，尚未打开页面进行授权，现有账号刷新即被误判为“新授权账号”并返回成功（假成功）。
+  2. 修复：彻底删除该 Panel-import path，设备授权登录严格等待上游 `pollDeviceToken` 真实完成或 metadata 明确传入 PAT 兑换，彻底根治未点链接自动认证成功的异常。
+- 涉及文件: qoder-ai/oauth.go、qoder-ai/VERSION、qoder-ai/CHANGELOG.md
+
 ## 0.1.7
 
 ### Fix - 模型推理请求终止契约与超时加固（对齐 WorkBuddy 成熟机制）

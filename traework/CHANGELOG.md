@@ -1,6 +1,25 @@
 # TraeWork Plugin Changelog
 
 
+## 0.2.6
+
+### Fix - 修复推理流扫描收到 done 后死等 Keep-Alive 导致推理收尾极慢的问题
+
+- 变更要点:
+  1. 根因：`upstream.go` 中的 `scanSSE` 在收到 `event: done` 时仅通过 `recordDone()` 标记布尔值，未立即退出读取大循环；由于上游网关保持 HTTP Keep-Alive 连接闲置，扫描器持续死等网络 EOF 直到网关超时（几十秒到几分钟），导致客户端在模型早已生成完毕后仍处于漫长的转圈等待状态，直观感受推理极慢。
+  2. 修复：引入 `errTraeStreamDone` 语义，在所有三条响应处理路径（`collectTraeStream`、`aggregateTraeCompletion`、`pumpTraeStreamAttempt`）中，当收到 `event: done` 时记录完成并立即退出大循环，`scanSSE` 即刻成功返回 `nil` 并主动完成收尾，彻底杜绝 Keep-Alive 闲置死等。
+  3. 回归测试：新增 `stream_done_immediate_test.go`，模拟 Keep-Alive 闲置阻塞连接，验证收到 done 即刻退出（耗时 < 50ms），并通过哨兵必失败反证确证生效。
+- 涉及文件: traework/upstream.go、traework/stream.go、traework/stream_done_immediate_test.go、traework/VERSION、traework/main.go、traework/CHANGELOG.md
+
+### Feat - 默认调度模式对齐为会话级粘性路由（session）
+
+- 变更要点:
+  1. 将 `scheduler_mode` 默认值从 `off` 改为 `session`（对齐 workbuddy 基线）：默认启用同一会话（1 小时内）固定同一账号的会话级粘性路由，并在账号故障时自动换号。
+  2. 同步更新 `traework/config.go` 中的 `defaultTraeConfig().SchedulerMode` 与 `traework/main.go` 中的 ConfigFields 描述与枚举顺序。
+  3. 新增 `TestSchedulerMode_DefaultIsSession` 单测断言，确保默认调度策略行为不漂移。
+- 涉及文件: traework/scheduler.go、traework/config.go、traework/main.go、traework/session_auth_test.go、traework/CHANGELOG.md
+
+
 ## 0.2.5
 
 ### Fix - 修复签到 x-device-id 拼接与尾零风控 9074 拦截并支持设备号轮换重试

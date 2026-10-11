@@ -446,6 +446,7 @@ func collectTraeStream(r io.Reader, model string, statusCode int) ([]pluginapi.E
 			collector.feed(ev.Data)
 		case "done":
 			terminal.recordDone()
+			return errTraeStreamDone
 		case "error":
 			msg := streamErrData(ev.Data)
 			if msg == "" {
@@ -528,6 +529,7 @@ func aggregateTraeCompletion(r io.Reader, model string, statusCode int) ([]byte,
 			collector.feed(ev.Data)
 		case "done":
 			terminal.recordDone()
+			return errTraeStreamDone
 		case "error":
 			msg := streamErrData(ev.Data)
 			if msg == "" {
@@ -806,6 +808,7 @@ func pumpTraeStreamAttempt(r io.Reader, ctx traeStreamPumpContext, requestID str
 			collector.feed(ev.Data)
 		case "done":
 			terminal.recordDone()
+			return errTraeStreamDone
 		case "error":
 			msg := streamErrData(ev.Data)
 			if msg == "" {

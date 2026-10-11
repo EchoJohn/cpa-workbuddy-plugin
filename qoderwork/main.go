@@ -345,7 +345,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "0.9.28"
+var version = "0.9.29"
 
 func wbRegistration() registration {
 	return registration{

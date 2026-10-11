@@ -340,10 +340,9 @@ func refreshDeviceToken(drt string) (*deviceTokenResponse, error) {
 	return &out, nil
 }
 
-// handlePollLogin implements AuthProvider.PollLogin. Three paths, in order:
+// handlePollLogin implements AuthProvider.PollLogin. Two paths:
 //  1. Legacy PAT pasted into the modal (kept for backward compatibility).
-//  2. Panel import produced a new auth file after StartLogin (unchanged).
-//  3. Device-authorization poll (the real OAuth flow).
+//  2. Device-authorization poll (the real OAuth flow via pollDeviceToken).
 func handlePollLogin(raw []byte) ([]byte, error) {
 	var req pluginapi.AuthLoginPollRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
@@ -418,29 +417,6 @@ func handlePollLogin(raw []byte) ([]byte, error) {
 			Status: pluginapi.AuthLoginStatusSuccess,
 			Auth:   ad,
 		})
-	}
-
-	// Panel-import path: a new qoderwork auth file appeared since StartLogin.
-	files, err := hostAuthList()
-	if err == nil {
-		for _, f := range files {
-			if f.CreatedAt.UnixNano() > lc.startedAt {
-				sa, err := hostAuthGet(f.AuthIndex)
-				if err == nil && sa != nil {
-					loginStates.Delete(state)
-					// CRITICAL: leave ID empty so the host computes it from
-					// the file path (authIDForPath). Setting ID=uid while the
-					// watcher registers with ID=<filename> produces two
-					// in-memory keys for the same file → duplicate accounts.
-					ad := toAuthDataOpts(sa, nil, false)
-					ad.ID = ""
-					return okEnvelope(pluginapi.AuthLoginPollResponse{
-						Status: pluginapi.AuthLoginStatusSuccess,
-						Auth:   ad,
-					})
-				}
-			}
-		}
 	}
 
 	return okEnvelope(pluginapi.AuthLoginPollResponse{
