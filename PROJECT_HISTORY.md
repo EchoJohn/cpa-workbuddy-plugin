@@ -4,6 +4,14 @@
 
 ## 事件
 
+- 2026-10-11：**彻底废弃并删除 Gemini 插件（gemini-provider）全量代码与构建资产**——用户反馈当前 Gemini 插件体积极大（.so 达 14.4MB，比含全套 UI 的 WorkBuddy 还要大 80%），且在实际使用中几乎不可用（强制要求带有 Cloud Project 与结算绑定的 GCP 开发者账号，缺少 Web 控制台与调度容灾机制）；经评估确认其投入产出比过低且严重违背轻量化原则，决定彻底放弃并不再维护该插件。执行全量清理：使用 `git rm` 删除 `gemini/` 源码目录、`release-assets/gemini-provider-0.1.1` 资产目录及对应图标文件；从 `registry.json` 中移除该插件（插件源总数由 9 个回退至 8 个）；从 `.github/workflows/build.yml` 中彻底剔除 `gemini` 的构建、交叉编译与 Release 矩阵；全面同步 `README.md`、`PROJECT_CURRENT.md`、`PROJECT_MEMORY.md`、`PROJECT_HISTORY.md` 与《九大插件全景架构与演进计划总览》；`validate-registry.py` 校验 8 插件通过，全量兄弟插件 `cgo-shim-build.py` 编译与单测全绿。
+
+- 2026-10-11：**沉淀「HTTP 200 首包业务报错帧假成功与全链路流式不缓冲规范」并完成生产 Nginx 重载验证**——用户反馈 New-API 接入 Qwen-3.8-Flash 极慢卡死无法使用，但 CPA 面板测试极快（219ms）、Token 用量插件显示响应不慢（334ms）。生产直测锁定双重根因：① 阿里 Qoder 上游对 Qwen 3.8 等受限/排队模型返回 HTTP 200 下的 `data: {"code":"403",... "10605"}` 排队不可用错误帧，CPA 面板 `active_ping` 仅盲读 512 字节未校验内容即判成功，误报 219ms 假成功，而真实推理因上游长连接死等卡死整整 60 秒直到 INTERNAL_ERROR 崩溃；② Token 用量插件记录的首包 TTFT 恰为 334ms 错误帧耗时，造成“响应不慢”错觉，但实际 `failed: true` 且耗时 60s；③ New-API 渠道测试按钮强制发送非流式（stream: false）全量等待，不能用于流式验证；④ 经由真实 `auto`（1.4s）与 `deepseek-v4.1-flash`（1.1s）对照确证 New-API 直连 CPA 8317 流式通畅；完成生产 Docker Nginx `proxy_buffering off; proxy_cache off;` 配置检查并通过 `docker exec nginx nginx -s reload` 热重载生效，外网端到端 1.35s 极速流式验证通过。落点 `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules`。
+
+- 2026-10-11：**新增「生产配置存储红线（不手工改数据库表，强制）」到仓库级规则与发布 skill**——用户口径「写进发布 skill」「同时补进」。背景：2026-10-11 两次生产 CPA 故障均由外部会话直读直写 `config_store` 触发配置转义损坏。结论（实证）：更新 / 安装生产插件只需 `plugin-store install` 一条管理 API 命令，CPA 自动把 version + 7 平台 artifacts 写入 `config_store.content` 的 `plugins.configs.<id>` 并热重载，**零人工介入**（18:04:53 `zcode-provider` 0.1.3 install 前后两次配置快照 diff，唯一实质差异即该插件 version 与 artifacts）；反例是 `select content` 后经 JSON 二次序列化写回 → 真实换行退化为字面 `\n` → 塌缩单行 → YAML 判空 → `remote-management.secret-key` / `port` 全丢 → `/v0` `/v8` 管理路由 404 + 端口漂移 + 外网 502。落点：`AGENTS.md` / `CLAUDE.md`「项目特有规则 → 仓库与发布」在重启红线后新增「生产配置存储红线」；项目 skill `project-cpa-workbuddy-plugin-release-rules` Step 13 新增「⛔ 更新插件不需要手工改数据库表」子章节、权责边界新增「不直接读写生产 `config_store` 表」、踩坑清单追加第 54 条，`references/source-notes.md` 追加变更记录；`PROJECT_MEMORY.md`（核心记忆 + 变更记录）同步。红线要点：改插件配置只走 install；非插件配置走 `PUT /v8/management/config`；表**只读不写**；损坏铁证 = 原反斜杠被再转义一层（`\"` → `\\"`）+ `char(10)` 真实换行数 = 1。
+
+- 2026-10-11：**吸收「生产容器重启红线」到项目规则与 skill（非必要不重启 cpa 容器）**——用户口径：非必要不要重启生产 cpa 容器，插件的新增 / 更新 / 安装走 `plugin-store install` 热重载即可、一般不需要重启。依据：install 默认返回 `restart_required:false` 热重载即生效（`docker logs cli-proxy-api | grep "hot reloaded"` 可见 `active_version`）；重启 `cli-proxy-api` 会中断在线流量并触发 60–80 秒冷启动（9 插件 + 模型刷新），属高成本、高影响操作，仅在热重载经证据确认未生效或配置损坏恢复等必要场景、且用户明确确认时才执行。落点：AGENTS.md / CLAUDE.md「仓库与发布」新增「生产容器重启红线（非必要不重启，强制）」；`project-cpa-workbuddy-plugin-release-rules` Step 13 校验项改为日志判定并新增红线条、权责边界末条改为「不主动重启生产 cpa 容器」；`project-cpa-workbuddy-plugin-host-config-safety-rules` 配置写入红线新增第 7 条（配置损坏恢复为必要例外）。
+
 - 2026-10-11：qoder-ai-provider **0.1.6 修复 UMID 设备风控与独立机器指纹派生（生产真实增加 +100 积分）**——用户报错：Qoder AI 国际版签到仍有问题，客户端显示可以签到（每日 100 Credits），但生产账号一个都无法真正签到成功，积分没有增加。根因排查：① 官方客户端通过阿里云安全盾 UMID 获取 `machineToken` 并派生 `machineType`/`machineCode`，请求头缺少设备标识时上游 OpenAPI 静默隐藏每日活动；② 上游同机多账号风控拦截，多账号共用设备标识返回 `BLOCKED: SAME_PERSON_ALREADY_CLAIMED`；③ `checkin.go` 的 float64 类型断言导致 `rewardCredits` 提取与快照更新失效。修复：在 `qoder-ai/` 纯 Go 独立实现安全盾协议（Section 1B 封装、zlib 压缩、10 组密钥 AES-128-CBC 加密、XXH64 派生），按账号 UID 确定性派生独立虚拟硬件指纹，并支持拦截自动轮换；注入完整 `Cosy-Machine*` 请求头；修复积分快照即时回写。本地 `cgo-shim-build.py qoder-ai` 全绿 + 金标准反证；CI run `38084535313` 全绿；assets `0952920` → registry `292ceb9`（0.1.6）。生产部署验证：`plugin-store install 0.1.6` 热重载成功；**生产账号 `u4aac824d` 真实签到成功，赠送/签到积分 0 → 100（+100）**；批量签到 `summary={already:6, no_activity:2, fail:0}` 全量通过；prune 清理 0.1.5 历史资产。
 
 - 2026-10-11：qoderwork-provider **0.9.27 修复 CN 每日签到「返回刷新成功但积分不变」（签到端点迁移 campaigns）**——用户报错：生产 QoderWork 账号积分 188，客户端显示可签到 +100，但签到不成功、只返回后台刷新、积分不变。根因（缺陷 C，与上一轮 0.9.26 缺陷 A 不同源）：CN 签到误用已废弃端点 `/sash/api/v1/me/daily-check-in/{status,claim}`；生产 token 实测 `status` 恒 `{"status":"DISABLED","campaignKey":"cn_daily_check_in_legacy"}`、`claim` 恒 HTTP 409 `AlreadyExists`，永远领不到积分。CN 官方客户端 v0.4.4（`com.qodercn.app.stable`）反解 + 运行日志证实真实签到走 campaigns API（`GET /sash/api/v1/me/campaigns` + `POST .../{campaignId}/claim`），且必须带 `Cosy-ClientType:10`+`User-Agent:Qoder` 头（缺头时列表被掩盖为 `showCampaign:false, campaigns:[]`）；与 qoder-ai 国际版 0.1.4 完全同源。修复：`main.go` 换 `endpointCampaigns`/`endpointCampaignClaim`；`billing.go` 新增 `campaignHeaders` + campaigns 解析 + `pickCheckinCampaign` + `performCheckinCall(sa,campaignID)`；`checkin.go` 传 `ci.CampaignID`、`!Active` 如实返回、summary 加 `no_activity`；`management.go` 加 `campaign_id`；`panel.html` 文案对齐。本地 `cgo-shim-build.py qoderwork` 全绿 + 双反证（`ClaimStatus` 破坏 → `TestPickCheckinCampaign_ClaimedInWindow` 必失败；删 Cosy 头 → `TestCampaignHeaders_CosyContract` 必失败）+ 提交态独立编译全绿（`git archive HEAD` + 叠加本轮文件）。发布链：`5b4acba` → CI run `38119587051` success（push-run `38119563064` 含 `Test (qoderwork) success`）→ assets `c568ce4` → registry `6a801b4`（0.9.27，7 平台 sha256/size ALL PASS、零残留）→ prune `bdda55a`（仅删自己的 0.9.26，保留并行会话在制的 qoder-ai 0.1.6）→ 文档 `dc94498`。生产部署：`plugin-store install 0.9.27` 落盘 `.so` sha256 `99733396c1bf3533e09274acfe175bd05fb87de60685f61be32a7d2e018c4085` 与本地 zip 逐字节一致，日志 `plugin hot reloaded active_version=0.9.27 retired_version=0.9.26`；**行为验收：生产账号 `u09a5b6ab`（`5643c3de6d95bacf`）真实签到 `success:true` + 「签到成功」，积分 188 → 288（+100）**；幂等复签返回 `reason=already, skipped=true,「今日已签到」` 不再报错。
@@ -38,13 +46,6 @@
 
 - 2026-10-05：gemini-provider **0.1.0** 集成与多插件 Token 用量统一统计——引入开源插件 `cpa-plugin-gemini-cli` 作为仓库第 4 个插件（3 服务商 + 1 用量统计），发布名称定为 "Gemini Provider"（ID: `gemini-provider`，版本: `0.1.0`）。建立 `gemini/` 独立模块（Go 1.26，对齐 `CLIProxyAPI/v7 v7.2.129`），导出标准 C ABI（`cliproxy_plugin_init`、`cliproxyPluginCall`、`cliproxyPluginFree`、`cliproxyPluginShutdown` 等），提供 panic recover 保护；实现 `usage.go` 与 `usage_feed.go`，将流式/非流式请求的 `usageMetadata` 与 TTFT 首包耗时写入共享 `<root>/data/token-usage-feed.ndjson`；更新 `token-usage-tracker` 身份归一化，将 `gemini` / `gemini-cli` / `gemini-provider` 统一展示为 `"Gemini"`；更新 CI 构建矩阵与 `registry.json`（新增 7 平台 artifacts 配置）。验证：`cgo-shim-build.py` 5 插件全绿通过（gemini, token-usage-tracker, traework, workbuddy, qoderwork），测试用例经哨兵拦截确认真实进编译，`validate-registry.py` 校验 5 插件全绿。沉淀知识库《集成GeminiProvider插件与多服务商Token用量统一聚合》。
 
-- 2026-10-01：workbuddy-provider **0.15.1** / traework-provider **0.2.1** / qoderwork-provider **0.9.21** —— 修复账号面板筛选标签计数不随积分回填重算（三插件已发布部署：CI 三 run 同 commit `df2c92c` success、远端 raw ALL PASS、生产 hot reloaded active=0.15.1/0.2.1/0.9.21、生产面板标签实测与筛选自洽）。用户反馈 WorkBuddy 面板筛选标签「可用 51 / 耗尽 0」与同屏汇总卡「21 个账号 · 可用 20 · 耗尽 0」自相矛盾。根因：`updateFilterCounts()` 是标签计数唯一写入口却只在 `load()` 调用一次，积分回填链路的其余重绘入口（`filterRegion` / `renderGrid` / `updateOneCard`）只走 `renderSummary()`；冷启动缓存为空使所有账号 `credits=null`，首屏把「未知」当「可用」写死 `可用=51 耗尽=0`，后台回填真实 credits 后只有汇总卡重算。修复：标签计数挂到统一渲染入口 `renderSummary()`（三插件同构）+ `load()` 去重；workbuddy 新增 `isAccountExhausted()` 收敛标签计数 / `accountsForFilter` / 卡片徽标 / 汇总卡四处判定（与后端 `isCreditsExhausted` 同口径）。验证：新增长期回归资产 `test/workbuddy/panel_filter_counts_repro.mjs`（Node vm + DOM 桩真实执行内联 JS，三插件参数），修复后 PASS（21/30 且标签与筛选自洽）、对 HEAD 反证 FAIL 3 项（51/0）；`cgo-shim-build.py` 三插件 build/vet/test 全绿。沉淀知识库《派生计数只在首屏算一次会长期停在旧值》。
-
-- 2026-09-30：workbuddy-provider **0.15.0** / traework-provider **0.2.0** —— 移除保号池机制、路由排除改由「测试」标签（test_failed）承担，**已提交并发布部署**；同轮把「默认提交/发布授权」写入仓库级规则 AGENTS.md / CLAUDE.md。用户口径：保号已基本无意义 → 去掉保号池用「测试」标签代替；token keepalive（登录态续期）不在删除范围。关键设计：保留「定时活跃探测 + 积分刷新」循环（refresh_runner.doFetchOne → triggerActivePing 失败写 test_failed），它是测试标签唯一自动来源；删保号翻转语义并整体改名（preserveWatchdogLoop→watchdogLoop、runPreserveWatchdogTick→runWatchdogTick、requestPreserveTick→requestWatchdogTick、preserveTickCh→watchdogTickCh、preserveWatchdogStartupWait→watchdogStartupWait、preserveWatchdogReadyPoll→watchdogReadyPoll，删 preserveWatchdogDisabledPoll），固定 watchdogIntervalDefault=10m。改动：两插件删 preserve.go；scheduler/active_auth/failover_retry/session_auth 硬排除只留 isTestFailed + isAccountCoolingDown；workbuddy 删 preserve_* 解析 / panel Preserve 字段 / panel.html 保号 UI / lifecycle preserveSetClear / credits_handler 标签映射改 test_failed；traework 删 isAccountPreserved / refreshPreserveSetFromDisk / Preserved map / config case / main ConfigFields / panel.html 保号 UI。验证：cgo-shim 双插件 build/vet/test 全绿（11.229s/2.022s）+ 哨兵法证明新测试进编译 + 双 panel.html 4 script 块 node 校验全绿 + 本轮零新增 gofmt 抱怨 + grep 确认保号符号 0 命中 + 6-review STYLE PASS（doc/6-review/2026-09-30_000524）。发布链 1e4a571→5e08deb→8200656→55506b6；CI run 36603938568/36603955142 同 commit `5e08deb` 双 success；远端 raw ALL PASS（14 artifacts sha256 全对、旧版零残留）；生产 install 落盘 .so sha256 与本地 zip 一致（4727e7bb…/2d61f96f…）+ hot reloaded active=0.15.0 retired=0.14.43 与 active=0.2.0 retired=0.1.68 + accounts/panel 全 200；行为验收 `/v1/responses` 流式 qwen3.8-max 16s / 56655B / 144 帧 + nonce 完整 + `exec stream async done attempt=1 chunks=174`。同轮规则变更：AGENTS.md + CLAUDE.md 以「提交 / 发布授权（默认授权，强制）」段替换原「严禁自动提交 Git」段，确立本仓库默认提交/发布授权（当轮显式边界仍绝对优先）。
-
-- 2026-09-29：workbuddy-provider **0.14.43** / traework-provider **0.1.68** 路由口径改造「优先可用账号 + 硬排除测试/保号/冷却 + 低积分优先」发布部署。改造前：workbuddy 走「健康层优先高积分」（0.14.40），`test_failed` 在调度链路完全没有排除，保号「全部保号时回退全量列表」等于把不可用账号放回路由；traework 另有真实缺陷——`refreshPreserveSetFromDisk()` 全仓无调用点，重启后保号账号仍被命中。落地：scheduler.pick 三段硬排除 + 全排除即 `Handled:false` 交还宿主跨 provider failover（删除"回退全量"兜底）；`sort.SliceStable` 按缓存积分升序（未测 -1 排最后）；新增 `accountRoutable` / `accountLowerCredits` 由 pickActiveAuth / ensureDefaultActiveAuth / pickSessionAuth / scheduler.pick 共用，面板选中项改为「可用账号中积分最低者」；`pickNextAuth` 跳过测试/保号但保持宿主顺序；`testFailedSet` 内存镜像 + `refreshTestFailedSetFromDisk` 三处同步（面板构建 / 保号 watchdog tick / 标签直写），重启后仍正确排除；traework 补 `refreshPreserveSetFromDisk` 调用点并修 `cachedCreditsScore` 空指针。验证：cgo-shim 双插件全绿（11.45s / 2.23s）+ 哨兵法证明新测试进编译 + 双 panel.html 4 script 块 node --check 全绿。发布链 cbb18b6→a9a893a→1c792cb→b33613c；CI run 36466163784/36466175909 同 commit `a9a893a` 双 success；远端 raw ALL PASS（14 artifacts size+sha256 全对、零残留）；生产 install 落盘 .so sha256 与本地一致（21ba3df2…/872a32e3…）+ hot reloaded active=0.14.43 retired=0.14.42 与 active=0.1.68 retired=0.1.67 + accounts/credits/panel 全 200。行为强证据：可用账号积分最低者（remain=31 的 `16226361146 [CN]`）与面板 `active_auth` 完全一致；真实 `/v1/responses` 3s 200 + nonce 完整。
-
-- 2026-09-27：workbuddy 0.14.42 面板「创建」时间改用 JWT `auth_time` 真实创建时间（旧值取宿主 `HostAuthFileEntry.CreatedAt`，被 watcher 的 `time.Now()` 每次扫描刷成「最近写入时刻」）。新增 `created_at.go` + 8 用例；cgo-shim 全绿含哨兵；发布链 cb0a2be→f44eb08→6736c90；CI 36327182344 success；远端 raw ALL PASS；生产 hot reloaded 0.14.42 + 落盘 sha256 一致；行为验证 `242e1dde` 由错误 09-27 22:12 纠正为真实 08-20 23:11。（同日收口：按 project-memory-rules 主动裁剪 PROJECT_CURRENT.md「已完成」区最旧的 24 条（2026-08-22~08-30）以满足 51,200 字节硬限，63,445 → 47,493 字节；并同步对齐 PROJECT_HISTORY.md 既有漂移的计数锚点区（HEAD 为 20 事件/19 锚点，现为 20/20））
 
 ## 计数锚点区
 
@@ -53,6 +54,21 @@
 ```yaml
 version: 1
 anchors:
+- title: '**沉淀「HTTP 200 首包业务报错帧假成功'
+  usage_count: 0
+  usage_days: 0
+  last_used_at: null
+  absorbed_to: null
+- title: '**新增「生产配置存储红线」'
+  usage_count: 0
+  usage_days: 0
+  last_used_at: null
+  absorbed_to: null
+- title: '**吸收「生产容器重启红线」'
+  usage_count: 0
+  usage_days: 0
+  last_used_at: null
+  absorbed_to: null
 - title: 'qoder-ai-provider **0.1.6 修复 UMID'
   usage_count: 0
   usage_days: 0
@@ -137,25 +153,5 @@ anchors:
   usage_count: 0
   usage_days: 0
   last_used_at: null
-  absorbed_to: null
-- title: 'workbuddy-provider **0.15.1** / tr'
-  usage_count: 0
-  usage_days: 0
-  last_used_at: null
-  absorbed_to: null
-- title: 'workbuddy-provider **0.15.0** / tr'
-  usage_count: 1
-  usage_days: 1
-  last_used_at: 2026-09-30
-  absorbed_to: null
-- title: 'workbuddy-provider **0.14.43** / tr'
-  usage_count: 0
-  usage_days: 0
-  last_used_at: null
-  absorbed_to: null
-- title: 'workbuddy 0.14.42 面板「创建」时间改用 J'
-  usage_count: 1
-  usage_days: 1
-  last_used_at: 2026-09-27
   absorbed_to: null
 ```

@@ -2,8 +2,8 @@
 
 ## 目标与范围
 
-- 目标：维护 CLIProxyAPI (CPA) 的 Go 原生插件套件 `cpa-workbuddy-plugin`（涵盖 8 大 AI 服务商 Provider + 1 统一用量统计插件），提供多账号管理、动态模型发现、流式转发、专属现代管理控制台、扫码/Token 登录、保号巡检与统一 token 用量统计分析服务。
-- 范围：仓库内 9 大插件体系的代码实现、单元测试、资产构建、发布流水线、registry 元数据同步等：
+- 目标：维护 CLIProxyAPI (CPA) 的 Go 原生插件套件 `cpa-workbuddy-plugin`（涵盖 7 大 AI 服务商 Provider + 1 统一用量统计插件），提供多账号管理、动态模型发现、流式转发、专属现代管理控制台、扫码/Token 登录、保号巡检与统一 token 用量统计分析服务。
+- 范围：仓库内 8 大插件体系的代码实现、单元测试、资产构建、发布流水线、registry 元数据同步等：
   1. `workbuddy-provider`：腾讯 CodeBuddy（国内版与 Global 版）；
   2. `workbuddy-ai-provider`：WorkBuddy AI（独立国际版）；
   3. `traework-provider`：Trae SOLO（字节跳动海外/国内 AI IDE 客户端）；
@@ -11,13 +11,12 @@
   5. `qoder-ai-provider`：Qoder AI（国际版 qoder.com，含 UMID 协议支持）；
   6. `cursor-provider`：Cursor（cursor.sh，Connect-RPC 协议与会话连续性）；
   7. `zcode-provider`：ZCode（BigModel Coding Plan，Anthropic 兼容与客户端真实指纹 mimic）；
-  8. `gemini-provider`：Google Gemini CLI；
-  9. `workbuddy-token-usage`：统一 Token 用量统计与实时看板服务。
+  8. `workbuddy-token-usage`：统一 Token 用量统计与实时看板服务。
 - 非范围：CLIProxyAPI 核心服务本体；跨项目文件修改。
 
 ## 项目概况
 
-- 状态：活跃维护中。9 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。最新发布/就绪版本：
+- 状态：活跃维护中。8 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
   - `zcode-provider`: **0.1.5**（重构为 Z.ai 官方 OAuth 授权链路，对接 chat.z.ai/auth 与 zcode.z.ai/api/v1/oauth/token，修复凭据结构与双通道回调捕获，生产热重载验证通过）
   - `cursor-provider`: **0.1.4**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
   - `qoderwork-provider`: **0.9.29**（彻底移除凭据轮询中基于 hostAuthList 创建时间的 Panel-import 假成功代码，未授权绝不误报成功；模型推理请求终止契约与超时加固）
@@ -25,12 +24,19 @@
   - `traework-provider`: **0.2.8**（测试探活 `/test-active` 改为流式首包即停 + Keep-Alive TLS 预热，消除思考模型生成整段思维链导致的 5~8s 等待并拦截 HTTP 200 下的 `event: error`；补齐 oauth-excluded-models 过滤；修复推理流扫描收到 event: done 即刻退出；默认会话级粘性路由 session）
   - `workbuddy-provider`: **0.15.4**（5 模型轮测探活、移除保号池、硬排除测试标签 + 低积分优先）
   - `workbuddy-ai-provider`: **0.1.9**（补齐完整路由层单测资产、5 模型轮测探活、国际版签到）
-  - `gemini-provider`: **0.1.1**
   - `workbuddy-token-usage`: **0.2.6**（移除四个图表与导出图片、下线 `/stats/trends` 及序列聚合以省算力与响应体积；0.2.5 起请求明细表与维度汇总表展示原始 provider id）
 - 活动工作区：F:\cpa-plugin
 - 当前时间：2026-10-11 (GMT+8)
 
 ## 活动会话进展摘要
+
+- 当前会话（2026-10-11）：**彻底废弃并删除 Gemini 插件（gemini-provider），全套配置与文档对齐 8 大插件体系**：
+  - 用户反馈与决策：用户指出当前 Gemini 插件体积极大（动态库达 14.4MB，比含全套 UI 的 WorkBuddy 还要大 80%），且在实际使用中几乎不可用（强制要求带有 Cloud Project 与结算绑定的 GCP 开发者账号，缺少 Web 管理面板与容灾调度）；经评估确认其投入产出比过低且严重违背轻量化原则，决定彻底放弃并不再维护该插件。
+  - 清理与实施动作：
+    1. **源码与发布资产清理**：使用 `git rm` 彻底删除 `gemini/` 源码目录、`release-assets/gemini-provider-0.1.1/` Release 资产目录，以及 `assets/icons/Gemini.png`、`assets/icons/Google.png` 图标文件；
+    2. **元数据与流水线同步**：从 `registry.json` 中移除 `gemini-provider` 插件配置（插件源总数从 9 个回退至 8 个）；从 `.github/workflows/build.yml` 中彻底剔除 `gemini` 的构建、交叉编译、Release 触发与 DISPLAY 映射；
+    3. **文档与规范全面更新**：更新 `README.md`、`PROJECT_CURRENT.md`、`PROJECT_MEMORY.md`、`PROJECT_HISTORY.md` 与《九大插件全景架构与演进计划总览》，明确记录 Gemini 插件的废弃与移除历史，更新全景矩阵为 8 大插件体系；
+    4. **全量回归验证**：`validate-registry.py` 校验 8 插件通过，全量兄弟插件 `cgo-shim-build.py` 编译与单测全绿。
 
 - 当前会话（2026-10-11）：**ZCode 插件重构为官方 Z.ai OAuth 授权链路，升级发布并在生产部署热重载 `zcode-provider 0.1.5`**：
   - 用户反馈与目标：用户指出 zcode 插件的授权此前误抄自开源项目要求粘贴 BigModel API Key，实际上应该走账号授权模式，通过官方 `https://chat.z.ai/auth?response_type=code&client_id=client_P8X5CMWmlaRO9gyO-KSqtg&redirect_uri=https%3A%2F%2Fzcode.z.ai%2Fapp%2Foauth%2Flogin%3Fredirect%3Dzcode%253A%252F%252Foauth%252Fcallback%26app_version%3D3.15.1&state=...` URL 登录授权并重新实现。
@@ -75,7 +81,7 @@
   - 本轮修复：`traework/models.go` 新增 `filterExcludedModels` 并在 `handleModelStatic` + `handleModelForAuth` 全部返回出口应用（未配置时原样返回，零行为变化；返回新切片避免污染动态缓存）。新增 `traework/models_excluded_test.go` 5 例，含"排除项永不命中"语义变异反证。`gofmt`/`cgo-shim-build.py traework` 全绿，6-review `STYLE: PASS`。
   - 文档：Bug 主文档 + 测试主文档 + 6-review 已落盘；知识库笔记 `20-Knowledge/工程实践/CPA同名模型多服务商认领治理与零首字节断开判读法.md`（含判读法与 `PATCH /v8/management/oauth-excluded-models` 安全写入路径）。
   - 现状：症状已随 Trae 流量退去自然平息（近 2h 该模型 599 次全部 workbuddy-provider、`client_gone` 0 次），但同名认领风险未消除。**0.2.7 发布与生产上线已完成**（后续 0.2.8 由并行会话发布并携带本修复，已在生产 `.so` 内确认 `filterExcludedModels` 存在）：CI run `38143777373` success、registry 同步、生产 `plugin-store install` 热重载 `registered version=0.2.7`、落盘 `.so` sha256 `23ea904c5bec…` 与产物一致、零容器重启、accounts 200（7 账号）、无 panic/fuse。
-  - 待办：需用户拍板的生产路由动作——`PATCH /v8/management/oauth-excluded-models` 把 `deepseek-v4.1-flash` 从 `traework-provider` 摘除（可 `models:[]` 即时回滚）。
+  - 待办：需用户拍板的生产治理动作——`PATCH /v0/management/oauth-excluded-models` 把 `deepseek-v4.1-flash` 从 `traework-provider` 摘除（2026-10-11 23:07 实测该键当前不存在，风险仍在；`PATCH` 是整表覆盖该 provider，须先 GET 合并；删除键用 `models:[]`）。注意前缀只能是 `/v0`，`/v8` 下该路由实测 404。
 
 - 当前会话（2026-10-11）：**Token 用量面板移除四个图表与导出图片并下线图表专用接口与聚合（workbuddy-token-usage 0.2.6 已发布并生产热重载验收通过）**：
   - 用户诉求：图表功能全部移除、相关统计逻辑一并去掉以节省算力与响应体积；拍板边界为"只移除 4 个图表 + 同步移除图表专用接口与聚合"。

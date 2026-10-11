@@ -2,7 +2,7 @@
 
 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) 的 Go 原生插件集合，将主流 AI 服务与私有逆向协议封装为 **OpenAI / Anthropic 兼容 Provider**，供 CPA 网关统一调度。套件支持多账号运维管理、账号阶梯故障转移、40x 同请求换号重试、会话粘性路由、全插件统一调度（硬排除测试标签 + 低积分优先）、动态模型发现与别名映射、流式长推理稳定性加固（首包即停与 liveBody 实时流）、每日自动签到与积分生命周期管理、桌面客户端指纹模拟（Mimic）与阿里安全盾（UMID）协议支持，以及统一 Token 用量统计与实时看板。
 
-目前包含 **9 个并列插件**（8 大 AI 服务商 Provider + 1 统一用量统计插件），每个插件采用独立模块、独立版本与独立 Release 生命周期管理。
+目前包含 **8 个并列插件**（7 大 AI 服务商 Provider + 1 统一用量统计插件），每个插件采用独立模块、独立版本与独立 Release 生命周期管理。
 
 ---
 
@@ -17,7 +17,6 @@
 | [`qoder-ai-provider`](#qoder-ai-provider--qoder-ai-国际版) | [`qoder-ai/`](qoder-ai/) | Qoder AI 国际版（qoder.com） | `v0.1.8` | 纯 Go 独立实现阿里安全盾 UMID 设备指纹协议，多账号虚拟硬件隔离每日签到（+100 积分），COSY 签名 |
 | [`cursor-provider`](#cursor-provider--cursor-provider) | [`cursor/`](cursor/) | Cursor（cursor.sh） | `v0.1.4` | 会话 Token 导入与备份 JSON 恢复，Connect-RPC 协议转译与会话连续性，250+ 真实模型发现与秒开搜索 |
 | [`zcode-provider`](#zcode-provider--zcode-provider) | [`zcode/`](zcode/) | ZCode（BigModel Coding Plan） | `v0.1.4` | Anthropic 兼容协议接入，ZCode 桌面客户端真实指纹模拟（Mimic），选模型测试探活与专属 Web 面板 |
-| [`gemini-provider`](#gemini-provider--gemini-provider) | [`gemini/`](gemini/) | Google Gemini Code Assist / CLI | `v0.1.1` | Cloud Code API 接入，多项目虚拟凭据扩展，OAuth 登录，模型转译与思维链（Thinking）配置 |
 | [`workbuddy-token-usage`](#workbuddy-token-usage--用量统计-dashboard) | [`token-usage-tracker/`](token-usage-tracker/) | 统一 Token 用量统计与实时看板 | `v0.2.6` | 汇聚各插件共享 NDJSON 用量流，提供请求明细（含服务商列）、维度汇总与成本分析，移除图表轻量化 |
 
 > 注：表格中「当前商店版本」以 [registry.json](registry.json)（CPA 插件商店官方可直接安装版本）为准；源码目录内 `VERSION` 可能包含已开发完毕的更高版本。
@@ -120,18 +119,6 @@
 
 ---
 
-### gemini-provider — Gemini Provider
-
-将 Google Gemini Code Assist / Gemini CLI 接入 CPA：
-
-- **Cloud Code API 接入** — 通过 Google Cloud Code 内部 API 接入 Gemini 上游端点。
-- **多项目虚拟凭据扩展** — 当单个物理凭据中包含多个 Google Cloud 项目 ID 时，自动在内存中裂变扩展为多个独立的虚拟凭据参与调度。
-- **双登录通道** — 支持通过 `/v0/management/oauth-callback` 进行 Web OAuth 登录，以及 `--geminicli-login` 命令行登录。
-- **协议双向转译** — 跨 OpenAI、Claude、Gemini 与 Codex 等多种协议格式的请求与响应双向转译；支持 Thinking 思维链参数配置。
-- **Token 用量统计** — 提取真实的 usageMetadata 与 TTFT 延迟并写入共享 feed。
-
----
-
 ### workbuddy-token-usage — 用量统计 Dashboard
 
 记录、统计并可视化跨插件各账户的真实 Token 消耗与费用：
@@ -183,8 +170,7 @@ cpa-workbuddy-plugin/
 ├── qoder-ai/                   # 插件 5：Qoder AI 国际版 Provider（阿里安全盾 UMID / 每日签到）
 ├── cursor/                     # 插件 6：Cursor Provider（Connect-RPC 协议 / 真实模型发现 / 面板）
 ├── zcode/                      # 插件 7：ZCode Provider（桌面客户端指纹模拟 Mimic / Web 面板）
-├── gemini/                     # 插件 8：Google Gemini Provider（Cloud Code API / 虚拟多项目）
-├── token-usage-tracker/        # 插件 9：统一 Token 用量看板（共享 NDJSON / 明细表 / 维度分析）
+├── token-usage-tracker/        # 插件 8：统一 Token 用量看板（共享 NDJSON / 明细表 / 维度分析）
 ├── registry.json               # 插件商店自定义源元数据（schema v2，direct install，包含 sha256 与 size）
 ├── release-assets/             # 各版本 7 平台架构 zip 与 checksums 产物（发布后仅保留各插件最新版）
 ├── assets/                     # 共享资源（官方高清图标 icons/ 等）
@@ -247,7 +233,6 @@ checksums.txt                       # 7 平台产物的 SHA-256 校验清单
    - `qoder-ai-provider`
    - `cursor-provider`
    - `zcode-provider`
-   - `gemini-provider`
    - `workbuddy-token-usage`
 
 > 提示：服务器生产环境可通过管理 API 热重载安装指定版本：
@@ -296,8 +281,6 @@ plugins:
       base_url: "https://open.bigmodel.cn/api/anthropic"
       mimic:
         enabled: true
-    gemini-provider:
-      enabled: true
     workbuddy-token-usage:
       enabled: true
 ```
