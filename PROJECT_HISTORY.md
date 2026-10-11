@@ -4,6 +4,8 @@
 
 ## 事件
 
+- 2026-10-11：qoder-ai-provider **0.1.6 修复 UMID 设备风控与独立机器指纹派生（生产真实增加 +100 积分）**——用户报错：Qoder AI 国际版签到仍有问题，客户端显示可以签到（每日 100 Credits），但生产账号一个都无法真正签到成功，积分没有增加。根因排查：① 官方客户端通过阿里云安全盾 UMID 获取 `machineToken` 并派生 `machineType`/`machineCode`，请求头缺少设备标识时上游 OpenAPI 静默隐藏每日活动；② 上游同机多账号风控拦截，多账号共用设备标识返回 `BLOCKED: SAME_PERSON_ALREADY_CLAIMED`；③ `checkin.go` 的 float64 类型断言导致 `rewardCredits` 提取与快照更新失效。修复：在 `qoder-ai/` 纯 Go 独立实现安全盾协议（Section 1B 封装、zlib 压缩、10 组密钥 AES-128-CBC 加密、XXH64 派生），按账号 UID 确定性派生独立虚拟硬件指纹，并支持拦截自动轮换；注入完整 `Cosy-Machine*` 请求头；修复积分快照即时回写。本地 `cgo-shim-build.py qoder-ai` 全绿 + 金标准反证；CI run `38084535313` 全绿；assets `0952920` → registry `292ceb9`（0.1.6）。生产部署验证：`plugin-store install 0.1.6` 热重载成功；**生产账号 `u4aac824d` 真实签到成功，赠送/签到积分 0 → 100（+100）**；批量签到 `summary={already:6, no_activity:2, fail:0}` 全量通过；prune 清理 0.1.5 历史资产。
+
 - 2026-10-11：qoderwork-provider **0.9.27 修复 CN 每日签到「返回刷新成功但积分不变」（签到端点迁移 campaigns）**——用户报错：生产 QoderWork 账号积分 188，客户端显示可签到 +100，但签到不成功、只返回后台刷新、积分不变。根因（缺陷 C，与上一轮 0.9.26 缺陷 A 不同源）：CN 签到误用已废弃端点 `/sash/api/v1/me/daily-check-in/{status,claim}`；生产 token 实测 `status` 恒 `{"status":"DISABLED","campaignKey":"cn_daily_check_in_legacy"}`、`claim` 恒 HTTP 409 `AlreadyExists`，永远领不到积分。CN 官方客户端 v0.4.4（`com.qodercn.app.stable`）反解 + 运行日志证实真实签到走 campaigns API（`GET /sash/api/v1/me/campaigns` + `POST .../{campaignId}/claim`），且必须带 `Cosy-ClientType:10`+`User-Agent:Qoder` 头（缺头时列表被掩盖为 `showCampaign:false, campaigns:[]`）；与 qoder-ai 国际版 0.1.4 完全同源。修复：`main.go` 换 `endpointCampaigns`/`endpointCampaignClaim`；`billing.go` 新增 `campaignHeaders` + campaigns 解析 + `pickCheckinCampaign` + `performCheckinCall(sa,campaignID)`；`checkin.go` 传 `ci.CampaignID`、`!Active` 如实返回、summary 加 `no_activity`；`management.go` 加 `campaign_id`；`panel.html` 文案对齐。本地 `cgo-shim-build.py qoderwork` 全绿 + 双反证（`ClaimStatus` 破坏 → `TestPickCheckinCampaign_ClaimedInWindow` 必失败；删 Cosy 头 → `TestCampaignHeaders_CosyContract` 必失败）+ 提交态独立编译全绿（`git archive HEAD` + 叠加本轮文件）。发布链：`5b4acba` → CI run `38119587051` success（push-run `38119563064` 含 `Test (qoderwork) success`）→ assets `c568ce4` → registry `6a801b4`（0.9.27，7 平台 sha256/size ALL PASS、零残留）→ prune `bdda55a`（仅删自己的 0.9.26，保留并行会话在制的 qoder-ai 0.1.6）→ 文档 `dc94498`。生产部署：`plugin-store install 0.9.27` 落盘 `.so` sha256 `99733396c1bf3533e09274acfe175bd05fb87de60685f61be32a7d2e018c4085` 与本地 zip 逐字节一致，日志 `plugin hot reloaded active_version=0.9.27 retired_version=0.9.26`；**行为验收：生产账号 `u09a5b6ab`（`5643c3de6d95bacf`）真实签到 `success:true` + 「签到成功」，积分 188 → 288（+100）**；幂等复签返回 `reason=already, skipped=true,「今日已签到」` 不再报错。
 
 - 2026-10-11：qoderwork-provider **0.9.26 修复宿主 HTTP 桥状态码解码错误（签到假成功根因，与 qoder-ai 0.1.3 同源）并发布部署**——用户报错：生产 QoderWork 账号 `u09a5b6ab` 可签到但「签到好像有 bug，无法签到」，面板显示签到成功却拿不到积分（假成功）。根因：`qoderwork/host_bridge.go` 用 `json:"status_code"` 解码宿主 `host.http.do` 响应，而宿主 v7.2.x 序列化 `pluginapi.HTTPResponse` 无 json tag，线协议键名是 PascalCase `{"StatusCode":404,...}`；下划线标签既不精确匹配也不构成大小写不敏感匹配 → `StatusCode` 恒为 0 → `if resp.StatusCode >= 400` 永不触发 → 404/4xx/5xx 被当 200 成功；`performCheckinCall` 再对缺 `success` 字段的响应盲归一化 `m["success"]=true` → 对外「签到成功」但积分不变。修复：移植 `parseHostHTTPDoResult`（PascalCase 优先 + 下划线防御性回退）；`performCheckinCall` 缺 `success` 布尔字段即返回 `success:false`。本地 `cgo-shim-build.py qoderwork` 全绿 + 反证（改回旧标签必失败，`StatusCode = 0, want 200`）。发布链：`72ce2d0` → CI run `38064786540` 65/65 success → `fb07a16`（8 资产）→ `712cfc6`（registry 0.9.26）→ `c37fea5`（prune 0.9.25）→ `20e6b01`（文档）；远端 7 平台 zip sha256 全等、旧版资产 404。生产部署：`plugin-store install` 0.9.26 落盘 `.so` sha256 `53a909b0e84bc70483db55ee94bfb928345eb3bdc0eacce4f60f396aa0fd29c1` 与本地 zip 一致，日志 `plugin loaded/registered version=0.9.26`；行为验收生产账号 `u09a5b6ab`（`6a155a864014ffd8`）调用 `/checkin` 返回 `success:false` + 真实上游 `http 409 AlreadyExists`（summary fail:1），由「假成功」变为如实失败。
@@ -44,8 +46,6 @@
 
 - 2026-09-27：workbuddy 0.14.42 面板「创建」时间改用 JWT `auth_time` 真实创建时间（旧值取宿主 `HostAuthFileEntry.CreatedAt`，被 watcher 的 `time.Now()` 每次扫描刷成「最近写入时刻」）。新增 `created_at.go` + 8 用例；cgo-shim 全绿含哨兵；发布链 cb0a2be→f44eb08→6736c90；CI 36327182344 success；远端 raw ALL PASS；生产 hot reloaded 0.14.42 + 落盘 sha256 一致；行为验证 `242e1dde` 由错误 09-27 22:12 纠正为真实 08-20 23:11。（同日收口：按 project-memory-rules 主动裁剪 PROJECT_CURRENT.md「已完成」区最旧的 24 条（2026-08-22~08-30）以满足 51,200 字节硬限，63,445 → 47,493 字节；并同步对齐 PROJECT_HISTORY.md 既有漂移的计数锚点区（HEAD 为 20 事件/19 锚点，现为 20/20））
 
-- 2026-09-05：traework-provider **0.1.44 发布部署**（GetUserInfo 401 回落回调 userInfo）：0.1.43 实测 exchange 已成功换到 token，但 GetUserInfo 报 401 "The user is not logged in"（cookie 会话鉴权路由，新 bearer token 不被认）。SOLO main.js 取证：客户端优先用回调 URL 的 userInfo JSON（r ?? await getUserInfo(...)），GetUserInfo 只是兜底。修复：parseBounceUserInfo 提取回调 userInfo 的 UserID/ScreenName，GetUserInfo 失败时回落。发布链 f38147d→4c924aa→a162f44；CI run 33902405197 success（16m+，两轮轮询窗口）；远端 ALL PASS；生产 install 首两次 CDN 滞后 version not found → 等 7 分钟第三次成功，落盘 sha256 60cb72ae 一致 + hot reloaded active=0.1.44。
-
 ## 计数锚点区
 
 > 本区由 `memory-usage-tracking-rules` 收口闸门维护：HISTORY 仅窄读计入，会话启动不读不计；被裁剪事件的锚点随事件一起删除（不保留 retired）；本区计数仅作主题热度弱信号。锚点 key 用事件 `- YYYY-MM-DD：` 后的核心主题短语（约前 12 字符，可前缀匹配）。
@@ -53,6 +53,16 @@
 ```yaml
 version: 1
 anchors:
+- title: 'qoder-ai-provider **0.1.6 修复 UMID'
+  usage_count: 0
+  usage_days: 0
+  last_used_at: null
+  absorbed_to: null
+- title: 'qoderwork-provider **0.9.27 修复 CN'
+  usage_count: 0
+  usage_days: 0
+  last_used_at: null
+  absorbed_to: null
 - title: 'qoderwork-provider **0.9.26 修复宿主'
   usage_count: 0
   usage_days: 0
@@ -147,10 +157,5 @@ anchors:
   usage_count: 1
   usage_days: 1
   last_used_at: 2026-09-27
-  absorbed_to: null
-- title: 'traework-provider **0.1.44 发布部'
-  usage_count: 0
-  usage_days: 0
-  last_used_at: null
   absorbed_to: null
 ```
