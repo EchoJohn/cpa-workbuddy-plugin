@@ -27,17 +27,33 @@ var (
 
 // StoredAuth 代表落盘的账号结构体。
 type StoredAuth struct {
-	Type         string   `json:"type"`
-	Provider     string   `json:"provider"`
-	AuthID       string   `json:"auth_id"`
-	APIKey       string   `json:"api_key"`
-	Label        string   `json:"label"`
-	Disabled     bool     `json:"disabled"`
-	CreatedAt    string   `json:"created_at"`
-	UpdatedAt    string   `json:"updated_at"`
-	Models       []string `json:"models,omitempty"`
-	TestFailed   bool     `json:"test_failed"`
-	PhysicalPath string   `json:"-"`
+	Type          string   `json:"type"`
+	Provider      string   `json:"provider"`
+	AuthID        string   `json:"auth_id"`
+	APIKey        string   `json:"api_key"`                  // 有效调用令牌 (zcodeJwtToken 或 APIKey)
+	Token         string   `json:"token,omitempty"`          // ZCode JWT Token (zcodejwttoken)
+	AccessToken   string   `json:"access_token,omitempty"`   // Z.ai OAuth Access Token
+	BusinessToken string   `json:"business_token,omitempty"` // Z.ai 业务 Access Token
+	ExpiresAt     string   `json:"expires_at,omitempty"`     // 令牌过期时间
+	UserID        string   `json:"user_id,omitempty"`        // 用户 ID
+	Username      string   `json:"username,omitempty"`       // 用户名
+	Email         string   `json:"email,omitempty"`          // 邮箱
+	AvatarURL     string   `json:"avatar_url,omitempty"`     // 头像链接
+	Label         string   `json:"label"`
+	Disabled      bool     `json:"disabled"`
+	CreatedAt     string   `json:"created_at"`
+	UpdatedAt     string   `json:"updated_at"`
+	Models        []string `json:"models,omitempty"`
+	TestFailed    bool     `json:"test_failed"`
+	PhysicalPath  string   `json:"-"`
+}
+
+// ZaiUserInfo 代表 Z.ai 用户信息。
+type ZaiUserInfo struct {
+	UserID string `json:"user_id"`
+	Name   string `json:"name"`
+	Email  string `json:"email"`
+	Avatar string `json:"avatar"`
 }
 
 type rpcHostAuthListResponse struct {
@@ -249,7 +265,10 @@ func listHostAuthFiles() []*StoredAuth {
 			continue
 		}
 		var sa StoredAuth
-		if err := json.Unmarshal(getResp.JSON, &sa); err == nil && sa.APIKey != "" {
+		if err := json.Unmarshal(getResp.JSON, &sa); err == nil && (sa.APIKey != "" || sa.Token != "") {
+			if sa.APIKey == "" {
+				sa.APIKey = sa.Token
+			}
 			if sa.AuthID == "" {
 				sa.AuthID = strings.TrimSuffix(f.Name, ".json")
 			}
@@ -291,7 +310,10 @@ func listAllAuthFiles() ([]*StoredAuth, error) {
 			continue
 		}
 		var sa StoredAuth
-		if err := json.Unmarshal(data, &sa); err == nil && sa.APIKey != "" {
+		if err := json.Unmarshal(data, &sa); err == nil && (sa.APIKey != "" || sa.Token != "") {
+			if sa.APIKey == "" {
+				sa.APIKey = sa.Token
+			}
 			if sa.AuthID == "" {
 				sa.AuthID = strings.TrimSuffix(entry.Name(), ".json")
 			}
@@ -378,6 +400,71 @@ func saveAPIKeyAccount(apiKey, label string) (*StoredAuth, error) {
 		UpdatedAt:  now,
 		Models:     defaultModels,
 		TestFailed: false,
+	}
+
+	if err := writeAuthFileDirect(fullPath, sa); err != nil {
+		return nil, err
+	}
+	return sa, nil
+}
+
+// saveZaiAccount 保存单条 Z.ai OAuth 授权账号。
+func saveZaiAccount(token, accessToken, businessToken string, user *ZaiUserInfo, expiresAt time.Time, label string) (*StoredAuth, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		token = strings.TrimSpace(accessToken)
+	}
+	if token == "" {
+		return nil, fmt.Errorf("empty token")
+	}
+
+	authID := authIDFor(token)
+	fileName := authFileNameFor(token)
+	fullPath := filepath.Join(getAccountsDir(), fileName)
+
+	if label == "" {
+		if user != nil && strings.TrimSpace(user.Name) != "" {
+			label = "ZCode " + strings.TrimSpace(user.Name)
+		} else if user != nil && strings.TrimSpace(user.Email) != "" {
+			label = "ZCode " + strings.TrimSpace(user.Email)
+		} else {
+			label = "ZCode " + maskAPIKey(token)
+		}
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	var expStr string
+	if !expiresAt.IsZero() {
+		expStr = expiresAt.Format(time.RFC3339)
+	}
+
+	var uid, uname, uemail, uavatar string
+	if user != nil {
+		uid = strings.TrimSpace(user.UserID)
+		uname = strings.TrimSpace(user.Name)
+		uemail = strings.TrimSpace(user.Email)
+		uavatar = strings.TrimSpace(user.Avatar)
+	}
+
+	sa := &StoredAuth{
+		Type:          zcodeProviderID,
+		Provider:      zcodeProviderID,
+		AuthID:        authID,
+		APIKey:        token, // 保存有效 token，供请求头和探活直接复用
+		Token:         token,
+		AccessToken:   accessToken,
+		BusinessToken: businessToken,
+		ExpiresAt:     expStr,
+		UserID:        uid,
+		Username:      uname,
+		Email:         uemail,
+		AvatarURL:     uavatar,
+		Label:         label,
+		Disabled:      false,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Models:        defaultModels,
+		TestFailed:    false,
 	}
 
 	if err := writeAuthFileDirect(fullPath, sa); err != nil {

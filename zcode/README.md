@@ -5,7 +5,7 @@
 ## 核心特性
 
 1. **ZCode 客户端指纹注入（Mimic）**：自动注入 ZCode 桌面客户端全量 Headers 指纹（`x-api-key`、`http-referer`、`User-Agent`、`x-zcode-app-version`、`x-zcode-agent`、`x-query-id`、`x-session-id`、`x-zcode-trace-id` 等）。
-2. **多账号独立存储与管理**：凭据安全保存在 `~/.antigravity_cockpit/zcode_accounts/zcode-<hash8>.json`，支持通过 Web 面板或管理 API 批量导入、导出、启用、禁用与删除。
+2. **多账号独立存储与管理**：支持通过 Z.ai 官方 OAuth 授权（`chat.z.ai/auth`）或 Token 导入账号，凭据安全保存在 `~/.antigravity_cockpit/zcode_accounts/zcode-<hash8>.json`，支持通过 Web 面板或管理 API 批量导入、导出、启用、禁用与删除。
 3. **专属管理控制台（Web Panel）**：挂载于 `/v0/resource/plugins/zcode-provider/panel`，支持深浅色主题切换、指标统计、账号卡片运维。
 4. **选模型测试探活**：面板支持弹出模型选择模态框，按指定模型向 `/test-active` 发起真实对话探活，测量响应延迟并自动标记故障状态。
 5. **智能调度与故障转移**：支持多账号轮询调度、429/5xx 阶梯退避冷却（1/3/10 分钟）、401/403/404 同请求自动换号重试、测试失败（`test_failed`）硬隔离。

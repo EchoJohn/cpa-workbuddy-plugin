@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestAuthFile_NamingAndSafety(t *testing.T) {
@@ -93,5 +94,39 @@ func TestMaskAPIKey(t *testing.T) {
 	masked := maskAPIKey("1234567890abcdef")
 	if masked != "1234....cdef" {
 		t.Fatalf("unexpected mask: %s", masked)
+	}
+}
+
+func TestAuthFile_ZaiAccount(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "zcode_test_zai_*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+	setAccountsDir(tempDir)
+
+	user := &ZaiUserInfo{
+		UserID: "10086",
+		Name:   "张三",
+		Email:  "zhangsan@z.ai",
+		Avatar: "https://avatar.z.ai/1.png",
+	}
+	sa, err := saveZaiAccount("mock_token_12345678", "mock_access_token", "mock_biz_token", user, time.Now().Add(30*24*time.Hour), "测试Zai账号")
+	if err != nil {
+		t.Fatalf("saveZaiAccount failed: %v", err)
+	}
+	if sa.UserID != "10086" || sa.Username != "张三" || sa.Email != "zhangsan@z.ai" {
+		t.Fatalf("user fields mismatch: %+v", sa)
+	}
+	if sa.APIKey != "mock_token_12345678" || sa.Token != "mock_token_12345678" {
+		t.Fatalf("token mismatch: %+v", sa)
+	}
+
+	list, err := listAllAuthFiles()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("expected 1 account, got %d (err=%v)", len(list), err)
+	}
+	if list[0].Username != "张三" {
+		t.Fatalf("expected username 张三, got %s", list[0].Username)
 	}
 }

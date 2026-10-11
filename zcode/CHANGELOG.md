@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.5] - 2026-10-11
+
+### Changed
+- 重构 ZCode 账号授权为官方真实 Z.ai OAuth 授权链路：
+  - 授权直达端点：对接官方 `chat.z.ai/auth`，下发真实 `client_id=client_P8X5CMWmlaRO9gyO-KSqtg` 与带版本及协议的 `redirect_uri=https://zcode.z.ai/app/oauth/login?redirect=zcode%3A%2F%2Foauth%2Fcallback&app_version=3.15.1`，生成 32 字符 hex `state`；
+  - 令牌交换接口：通过 `https://zcode.z.ai/api/v1/oauth/token`（`provider=zai`）将授权码交换为正式 `zcodeJwtToken`、`access_token` 及用户档案数据；
+  - 凭据存储升级：`StoredAuth` 扩展 `token`、`access_token`、`user_id`、`username`、`email`、`avatar_url`、`expires_at`，保持与已有 APIKey 的完全向下兼容；
+  - 桥接页面升级：`/oauth-bridge` 改为 Z.ai 官方登录授权引导与回调地址（含 code 与 state）解析提交；
+  - 宿主回调自动捕获：`handlePollLogin` 支持自动读取宿主 `.oauth-zcode-provider-<state>.oauth` 载荷文件并兑换落盘；
+  - 管理面板升级：`panel.html` 增加「OAuth 授权登录」按钮，支持账号用户名/邮箱/用户ID展示与凭据导入。
+
 ## [0.1.4] - 2026-10-11
 
 ### Fixed

@@ -81,6 +81,11 @@ type accountSummary struct {
 	AuthIndex    string   `json:"auth_index"`
 	Label        string   `json:"label"`
 	APIKeyMasked string   `json:"api_key_masked"`
+	UserID       string   `json:"user_id,omitempty"`
+	Username     string   `json:"username,omitempty"`
+	Email        string   `json:"email,omitempty"`
+	AvatarURL    string   `json:"avatar_url,omitempty"`
+	ExpiresAt    string   `json:"expires_at,omitempty"`
 	Disabled     bool     `json:"disabled"`
 	TestFailed   bool     `json:"test_failed"`
 	CoolingDown  bool     `json:"cooling_down"`
@@ -234,6 +239,11 @@ func handleListAccounts() ([]byte, error) {
 			AuthIndex:    acc.AuthID,
 			Label:        acc.Label,
 			APIKeyMasked: maskAPIKey(acc.APIKey),
+			UserID:       acc.UserID,
+			Username:     acc.Username,
+			Email:        acc.Email,
+			AvatarURL:    acc.AvatarURL,
+			ExpiresAt:    acc.ExpiresAt,
 			Disabled:     acc.Disabled,
 			TestFailed:   acc.TestFailed,
 			CoolingDown:  isAccountCoolingDown(acc.AuthID),
@@ -275,8 +285,20 @@ func handleImportAccounts(body []byte) ([]byte, error) {
 			apiKey = strings.TrimSpace(parts[0])
 			label = strings.TrimSpace(parts[1])
 		} else if strings.HasPrefix(line, "{") {
-			apiKey = gjson.Get(line, "api_key").String()
+			apiKey = gjson.Get(line, "token").String()
+			if apiKey == "" {
+				apiKey = gjson.Get(line, "api_key").String()
+			}
+			if apiKey == "" {
+				apiKey = gjson.Get(line, "access_token").String()
+			}
 			label = gjson.Get(line, "label").String()
+			if label == "" {
+				label = gjson.Get(line, "username").String()
+			}
+			if label == "" {
+				label = gjson.Get(line, "email").String()
+			}
 		} else {
 			apiKey = line
 		}

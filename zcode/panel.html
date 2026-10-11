@@ -184,7 +184,7 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 <body>
 <div class="wrap">
   <h1>ZCode 账号面板</h1>
-  <div class="sub">BigModel Coding Plan · ZCode 客户端指纹 · 失效自动冷却</div>
+  <div class="sub">Z.ai 官方账号授权 · ZCode 客户端指纹 · 失效自动冷却</div>
   <div id="authBox" class="card" style="display:none;margin-bottom:16px">
     <div style="margin-bottom:8px;color:var(--mut)">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
     <div style="display:flex;gap:8px">
@@ -193,7 +193,8 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
     </div>
   </div>
   <div class="bar">
-    <button class="sec" id="importBtn" onclick="openImportModal()">导入 Key</button>
+    <button id="oauthBtn" onclick="openOAuthBridge()" style="background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border);font-weight:600">OAuth 授权登录</button>
+    <button class="sec" id="importBtn" onclick="openImportModal()">导入凭据</button>
     <button class="sec" id="exportBtn" onclick="exportAccounts(this)" title="导出全部账号凭证为 JSON，可直接再导入">导出凭证</button>
     <button class="sec" onclick="setAllStatus(false, this)">全部启用</button>
     <button class="sec" onclick="setAllStatus(true, this)">全部禁用</button>
@@ -213,12 +214,12 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 <div class="modal-mask" id="importModal" onclick="onImportMaskClick(event)">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="importModalTitle">
     <div class="modal-hd">
-      <h2 id="importModalTitle">导入 API Key</h2>
+      <h2 id="importModalTitle">导入凭据 / Key</h2>
       <button type="button" class="modal-x" onclick="closeImportModal()" aria-label="关闭">×</button>
     </div>
     <div class="modal-bd">
-      <p class="hint">每行一个 BigModel API Key；可用 <code>KEY----备注</code> 追加账号备注。落盘为 <code>zcode-&lt;hash8&gt;.json</code>。</p>
-      <textarea id="importRaw" rows="8" placeholder="607c3xxxxxxxx.xxxxxxxx----我的账号1&#10;809c2xxxxxxxx.xxxxxxxx----我的账号2"></textarea>
+      <p class="hint">支持每行一个 ZCode JWT Token、Z.ai Access Token 或 BigModel API Key；可用 <code>TOKEN----备注</code> 追加备注；亦可直接粘贴整段导出凭据 JSON。落盘为 <code>zcode-&lt;hash8&gt;.json</code>。</p>
+      <textarea id="importRaw" rows="8" placeholder="粘贴 Token、API Key 或 JSON 凭据，或每行一个：&#10;eyJhbGciOi...----我的账号1"></textarea>
       <div class="import-result" id="importResult"></div>
     </div>
     <div class="modal-ft">
@@ -421,12 +422,15 @@ function card(a){
   const toggleBtn=a.disabled
     ? `<button class="sec" data-action="enable" data-auth-index="${esc(a.auth_id)}">启用</button>`
     : `<button class="sec" data-action="disable" data-auth-index="${esc(a.auth_id)}">禁用</button>`;
-  return `<div class="card" data-state="${st}" data-auth="${esc(a.auth_id)}" data-name="${esc(displayName(a))}" data-search="${esc(((a.label||"")+" "+(a.api_key_masked||"")+" "+(a.auth_id||"")).toLowerCase())}">
-  <h2><span class="name" title="${esc(displayName(a))}">${esc(displayName(a))}</span> <span style="display:flex;gap:6px;align-items:center;flex:none">${stateBadge(a)}<button type="button" class="card-del" data-action="delete" data-auth-index="${esc(a.auth_id)}" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>
+  const titleName = a.label || a.username || a.email || a.auth_id || "未命名";
+  return `<div class="card" data-state="${st}" data-auth="${esc(a.auth_id)}" data-name="${esc(titleName)}" data-search="${esc(((a.label||"")+" "+(a.username||"")+" "+(a.email||"")+" "+(a.user_id||"")+" "+(a.api_key_masked||"")+" "+(a.auth_id||"")).toLowerCase())}">
+  <h2><span class="name" title="${esc(titleName)}">${esc(titleName)}</span> <span style="display:flex;gap:6px;align-items:center;flex:none">${stateBadge(a)}<button type="button" class="card-del" data-action="delete" data-auth-index="${esc(a.auth_id)}" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>
   <div class="uid" title="${esc(a.auth_id||"")}">${esc(a.auth_id||"")}</div>
-  <div class="row"><span class="k">API Key</span><span class="v mono" title="已脱敏">${esc(a.api_key_masked||"-")}</span></div>
+  <div class="row"><span class="k">访问令牌</span><span class="v mono" title="已脱敏">${esc(a.api_key_masked||"-")}</span></div>
+  ${a.user_id?`<div class="row"><span class="k">用户ID</span><span class="v mono">${esc(a.user_id)}</span></div>`:""}
+  ${a.email?`<div class="row"><span class="k">邮箱</span><span class="v">${esc(a.email)}</span></div>`:""}
   ${a.created_at?`<div class="row"><span class="k">创建</span><span class="v mono">${esc(fmtCST(a.created_at))}</span></div>`:""}
-  ${a.updated_at?`<div class="row"><span class="k">更新</span><span class="v mono">${esc(fmtCST(a.updated_at))}</span></div>`:""}
+  ${a.expires_at?`<div class="row"><span class="k">过期</span><span class="v mono">${esc(fmtCST(a.expires_at))}</span></div>`:""}
   <div class="models">${modelTags}${more}</div>
   <div class="actions">
     <button class="sec" data-action="test" data-auth-index="${esc(a.auth_id)}" title="选择模型发送一次真实推理请求">测试</button>
@@ -544,10 +548,13 @@ function openImportModal(){
 }
 function closeImportModal(){document.getElementById("importModal").classList.remove("show")}
 function onImportMaskClick(ev){if(ev.target&&ev.target.id==="importModal")closeImportModal()}
+function openOAuthBridge(){
+  window.open("/v0/resource/plugins/zcode-provider/oauth-bridge", "_blank");
+}
 async function submitImport(btn){
   const raw=document.getElementById("importRaw").value.trim();
   const box=document.getElementById("importResult");
-  if(!raw){ box.className="import-result show"; box.innerHTML='<div class="r-hd err">请先粘贴 API Key</div>'; return; }
+  if(!raw){ box.className="import-result show"; box.innerHTML='<div class="r-hd err">请先粘贴凭据内容</div>'; return; }
   busy(btn,true);
   try{
     const d=await api("/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:raw})});
