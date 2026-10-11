@@ -17,14 +17,14 @@
 ## 项目概况
 
 - 状态：活跃维护中。8 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
-  - `zcode-provider`: **0.1.5**（重构为 Z.ai 官方 OAuth 授权链路，对接 chat.z.ai/auth 与 zcode.z.ai/api/v1/oauth/token，修复凭据结构与双通道回调捕获，生产热重载验证通过）
+  - `zcode-provider`: **0.1.8**（重构为 Z.ai 官方 CLI 轮询 OAuth 链路，根治 redirect_uri 白名单拒绝；授权地址改用服务端注册回调 `zcode.z.ai/api/v1/oauth/cli/callback/zai`，生产热重载验证通过）
   - `cursor-provider`: **0.1.4**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
   - `qoderwork-provider`: **0.9.29**（彻底移除凭据轮询中基于 hostAuthList 创建时间的 Panel-import 假成功代码，未授权绝不误报成功；模型推理请求终止契约与超时加固）
   - `qoder-ai-provider`: **0.1.8**（彻底移除凭据轮询中基于 hostAuthList 创建时间的 Panel-import 假成功代码，未授权绝不误报成功；模型推理请求终止契约与超时加固）
   - `traework-provider`: **0.2.8**（测试探活 `/test-active` 改为流式首包即停 + Keep-Alive TLS 预热，消除思考模型生成整段思维链导致的 5~8s 等待并拦截 HTTP 200 下的 `event: error`；补齐 oauth-excluded-models 过滤；修复推理流扫描收到 event: done 即刻退出；默认会话级粘性路由 session）
   - `workbuddy-provider`: **0.15.4**（5 模型轮测探活、移除保号池、硬排除测试标签 + 低积分优先）
   - `workbuddy-ai-provider`: **0.1.9**（补齐完整路由层单测资产、5 模型轮测探活、国际版签到）
-  - `workbuddy-token-usage`: **0.2.6**（移除四个图表与导出图片、下线 `/stats/trends` 及序列聚合以省算力与响应体积；0.2.5 起请求明细表与维度汇总表展示原始 provider id）
+  - `workbuddy-token-usage`: **0.2.8**（0.2.8 让退役实例的 feed 导入协程在连续 3 轮关闭句柄后自行退出；0.2.7 修复宿主配置重载换句柄窗口导致的用量记录丢失；0.2.6 移除四个图表与导出图片、下线 `/stats/trends` 及序列聚合以省算力与响应体积；0.2.5 起请求明细与维度汇总展示原始 provider id）
 - 活动工作区：F:\cpa-plugin
 - 当前时间：2026-10-11 (GMT+8)
 
@@ -37,6 +37,26 @@
     2. **元数据与流水线同步**：从 `registry.json` 中移除 `gemini-provider` 插件配置（插件源总数从 9 个回退至 8 个）；从 `.github/workflows/build.yml` 中彻底剔除 `gemini` 的构建、交叉编译、Release 触发与 DISPLAY 映射；
     3. **文档与规范全面更新**：更新 `README.md`、`PROJECT_CURRENT.md`、`PROJECT_MEMORY.md`、`PROJECT_HISTORY.md` 与《九大插件全景架构与演进计划总览》，明确记录 Gemini 插件的废弃与移除历史，更新全景矩阵为 8 大插件体系；
     4. **全量回归验证**：`validate-registry.py` 校验 8 插件通过，全量兄弟插件 `cgo-shim-build.py` 编译与单测全绿。
+
+- 当前会话（2026-10-12）：**ZCode 授权根治为官方 CLI 轮询 OAuth 链路，升级发布并在生产部署热重载 `zcode-provider 0.1.8`**：
+  - 用户反馈与目标：0.1.7 上线后生产实际授权仍失败，浏览器打开 `chat.z.ai/api/oauth/authorize?...` 返回 `{"detail":"Redirect URI not registered for this client"}`；要求继续修复。
+  - 根因实证锁定（推翻上一轮结论）：
+    1. **上游回调白名单**：`chat.z.ai` 对 `client_id=client_P8X5CMWmlaRO9gyO-KSqtg` 执行 redirect_uri 严格白名单，**仅接受服务端注册的 `https://zcode.z.ai/api/v1/oauth/cli/callback/zai`**；桌面端 deep-link（`zcode://oauth/callback`）与 CPA 本地回调（`localhost:1455` / `127.0.0.1:8317`）均被拒绝——上一轮「改用 CPA 本地回调」的方案本身即错误。
+    2. **官方真实链路是 CLI 轮询模式**：逆向 ZCode 3.15.1 `app.asar`（`out/host/index.js` 的 `startOAuthWithPolling` / `pollPendingOAuth`）确认官方走 `POST /api/v1/oauth/cli/init` + `GET /api/v1/oauth/cli/poll/<flow_id>`，并由服务端用已注册回调完成授权，插件只负责轮询取结果。
+  - 实施修复与系统实现（v0.1.8）：
+    1. `handleStartLogin` 改为调用 `POST https://zcode.z.ai/api/v1/oauth/cli/init`（`Authorization: Bearer <随机 32 字节 hex>`），原样透传服务端签发的 `authorize_url`（**不得改写其 `redirect_uri`**），并将 `flow_id` / `poll_token` 存入会话；
+    2. `handlePollLogin` 改为轮询 `GET https://zcode.z.ai/api/v1/oauth/cli/poll/<flow_id>`：`status=pending` 返回 pending 交宿主继续轮询，`status=ready` 时取 `token`（ZCode JWT）+ `zai.access_token` + `user` 落盘，`status=failed` 返回错误；传输类失败保留会话返回 pending 以避免误判；
+    3. 移除本地回调桥接与手工 `redirect_uri` 回传路径，桥接页改为「引导跳转 + 主动查一次结果」。
+  - 契约线上实测验证（`zcode.z.ai`）：
+    - `POST /api/v1/oauth/cli/init` → `{"code":0,"data":{"flow_id":"...","poll_token":"...","authorize_url":"https://chat.z.ai/api/oauth/authorize?client_id=...&redirect_uri=https://zcode.z.ai/api/v1/oauth/cli/callback/zai&state=...&response_type=code","expires_at":...,"poll_interval_sec":2}}`；
+    - `GET /api/v1/oauth/cli/poll/<flow_id>` → `{"code":0,"data":{"status":"pending"}}`；
+    - `chat.z.ai/api/oauth/authorize?...&redirect_uri=https://zcode.z.ai/api/v1/oauth/cli/callback/zai` → **HTTP 307 重定向至登录页**（白名单通过，不再报错）。
+  - 验证与门禁全绿：`python scripts/cgo-shim-build.py zcode` build/vet/test 全绿；新增 3 项回归测试（官方注册回调锁定、poll failed 分支、init 失败传播）并经受 `ZCODE_SENTINEL_CLI_FAIL=1` 必失败哨兵反证。
+  - 全链路发布与生产验收：
+    - 提交 `fb24235` 推送 main；CI Run `38155115546` 65/65 jobs 全绿；8 资产 `ALL CHECKSUMS OK`（`4e8a925`）；registry 同步 `9362c3f`；远端 raw 7/7 平台 200 且 sha256 一致；prune 0.1.7（`9171562`）；
+    - 生产 `plugin-store install zcode-provider?version=0.1.8` 热重载生效（`active_version=0.1.8 retired_version=0.1.7`，`restart_required:false`，零容器重启）；落盘 `.so` sha256 `aa82c93a282adb435f329cad399f0064b3a186f4a93dde54ad767ec58f2bb197` 与本地 zip 逐字节一致；
+    - 生产 `GET /v0/management/zcode-provider-auth-url` 实测返回 **`https://chat.z.ai/api/oauth/authorize?client_id=...&redirect_uri=https://zcode.z.ai/api/v1/oauth/cli/callback/zai&response_type=code&state=...`**，已指向官方注册回调，白名单校验通过。
+  - 知识沉淀：知识库笔记《Z.ai-ZCode-OAuth授权契约-CLI轮询模式》+ 项目记忆条目 `feedback-cpa-oauth-redirect-uri`（已纠正为「上游有白名单时必须复用官方 CLI 轮询链路」）。
 
 - 当前会话（2026-10-11）：**ZCode 插件重构为官方 Z.ai OAuth 授权链路，升级发布并在生产部署热重载 `zcode-provider 0.1.5`**：
   - 用户反馈与目标：用户指出 zcode 插件的授权此前误抄自开源项目要求粘贴 BigModel API Key，实际上应该走账号授权模式，通过官方 `https://chat.z.ai/auth?response_type=code&client_id=client_P8X5CMWmlaRO9gyO-KSqtg&redirect_uri=https%3A%2F%2Fzcode.z.ai%2Fapp%2Foauth%2Flogin%3Fredirect%3Dzcode%253A%252F%252Foauth%252Fcallback%26app_version%3D3.15.1&state=...` URL 登录授权并重新实现。
@@ -81,14 +101,16 @@
   - 本轮修复：`traework/models.go` 新增 `filterExcludedModels` 并在 `handleModelStatic` + `handleModelForAuth` 全部返回出口应用（未配置时原样返回，零行为变化；返回新切片避免污染动态缓存）。新增 `traework/models_excluded_test.go` 5 例，含"排除项永不命中"语义变异反证。`gofmt`/`cgo-shim-build.py traework` 全绿，6-review `STYLE: PASS`。
   - 文档：Bug 主文档 + 测试主文档 + 6-review 已落盘；知识库笔记 `20-Knowledge/工程实践/CPA同名模型多服务商认领治理与零首字节断开判读法.md`（含判读法与 `PATCH /v8/management/oauth-excluded-models` 安全写入路径）。
   - 现状：症状已随 Trae 流量退去自然平息（近 2h 该模型 599 次全部 workbuddy-provider、`client_gone` 0 次），但同名认领风险未消除。**0.2.7 发布与生产上线已完成**（后续 0.2.8 由并行会话发布并携带本修复，已在生产 `.so` 内确认 `filterExcludedModels` 存在）：CI run `38143777373` success、registry 同步、生产 `plugin-store install` 热重载 `registered version=0.2.7`、落盘 `.so` sha256 `23ea904c5bec…` 与产物一致、零容器重启、accounts 200（7 账号）、无 panic/fuse。
-  - 待办：需用户拍板的生产治理动作——`PATCH /v0/management/oauth-excluded-models` 把 `deepseek-v4.1-flash` 从 `traework-provider` 摘除（2026-10-11 23:07 实测该键当前不存在，风险仍在；`PATCH` 是整表覆盖该 provider，须先 GET 合并；删除键用 `models:[]`）。注意前缀只能是 `/v0`，`/v8` 下该路由实测 404。
+  - 待办（需用户拍板，已扩为批量）：生产治理动作 `PATCH /v0/management/oauth-excluded-models`（实测前缀只能是 `/v0`，`/v8` 下该路由 404；PATCH 是整表覆盖该 provider，须先 GET 合并）。按 24:03 实测的实时认领矩阵，traework 与 workbuddy / workbuddy-ai 各共享 **6** 个裸名（`deepseek-v4.1-flash`、`glm-5.2`、`glm-5.3`、`glm-5.3-flash`、`kimi-k2.6`、`minimax-m3`/`kimi-k3`），故建议一次决策整批而非只摘一个；`auto` 被四家同时认领属治理盲区，排除前须单独评估。当前触发面活跃：Trae 账号实时列表仍含该名字、7 账号中仅 1 个 active（剩 83 积分）、2 个 exhausted、近 60 分钟仍有 9 次配额错误，而该模型近 24h 无新请求 ⇒ 属已上膛未击发。
 
 - 当前会话（2026-10-11）：**Token 用量面板移除四个图表与导出图片并下线图表专用接口与聚合（workbuddy-token-usage 0.2.6 已发布并生产热重载验收通过）**：
   - 用户诉求：图表功能全部移除、相关统计逻辑一并去掉以节省算力与响应体积；拍板边界为"只移除 4 个图表 + 同步移除图表专用接口与聚合"。
   - 实现：`dashboard.go` 删除 visual/advanced 两个 grid section、tooltip、导出图片按钮、聚合粒度下拉、41 个图表函数 + 6 个占比口径函数 + canvas 导出及其状态与监听；`selectedModel`/`hiddenModels` 随唯一写入者消失而移除；来源筛选锚点改挂隐藏的 `#range`；Go 替换器删 3 条并改写 2 条模式串防静默失配。后端下线 `/stats/trends` 与 `StatsTrendResponse`/`queryStatsTrendByFilter`/`statsQueryTrend`，`/stats/initial` 去 `series`+`bucket_seconds`、`/costs` 去 `series`；另清理 72 条无主 CSS 与四语言包各 56 个图表文案键。收益：`dashboard.go` −21%（269,709 → 212,658 字节）。
   - 门禁：`cgo-shim-build.py token-usage-tracker` 全绿；新增 `chart_endpoints_removed_test.go` 4 用例与 `test/token-usage/panel_chart_removal_repro.mjs` 38 项静态断言全 PASS（旧版本反证 24 项 FAIL）；两个执行型脚本的 trends 桩改为命中即抛错后仍全绿；字段变异反证触发 2 个 FAIL 后还原复绿。文档：`doc/2-需求/…222600_*`、`doc/5-tests/…222630_*`、`doc/6-review/…222710_*`（STYLE: PASS）。
   - 发布与生产验收：commits `d7494dd`/`bbb142b`/`61a29a0`/`a7a7778`，CI run `38147308550` success（8 资产 ALL CHECKSUMS OK），`.so` sha256 `5feaf5bd2bd4…`；生产 `plugin-store install` 返回 `installed restart_required=false`，宿主日志 `host.go:408 plugin hot reloaded active_version=0.2.6 retired_version=0.2.5`，零容器重启。线上面板 217,901 字节回读：图表标记全 0、卡片与 `groups`/`requestRows`/`key:'provider'` 保留；接口层 `/stats/trends` 404、`/stats/initial`+`/costs` 无 `series`，`/stats`+`/stats/groups`+`/requests` 均 200。0.2.5 资产定向 prune（远端 0.2.6=200、0.2.5=404）。
-  - 新发现（未修，待用户裁定）：`store is closed` 类记录失败在安装前 60 分钟就持续存在，繁忙时段约 30–40%；`feed_ingest.go:491` 在写库前已推进 `consumed` 偏移且失败分支只 `continue`，故这些用量记录**永久丢失**而非重试。疑因宿主配置热重载触发 `reopenStore` 关旧 store、在途 ingest 仍持旧句柄（见 `feed_ingest.go:179-187` 注释）。0.2.6 上线后比率未变差。
+  - 后续发现并部分修复（0.2.7）：`store is closed` 失败分两类——A 类由宿主配置重载引发的换句柄窗口，每次带走 7–14 条真实丢失（`cfg_reload=0 且 reconfig=0` 的分钟 fail 恒为 0），0.2.7 已修（`ErrStoreClosed` 哨兵 + 配置指纹未变即复用句柄 + 关闭态不推进偏移，变异反证 `consumed = 1272/1284, want 0`）；B 类来自退役实例泄漏的 `feedImporterLoop`（`importerOnce` 每实例一份、关闭 store 不通知导入循环退出），实测 15 分钟内 0 次 reload/reconfigure/热重载仍有 248 条失败，但 `feed.ndjson.offset` 与文件字节数逐字节相等（94438247==94438247）、store 24h 11,114 ≥ new-api 5,046，证明是纯噪声与 CPU 空转、不丢数据，尚未修。据此撤回此前按 A+B 混算的「约 22%/最高 54% 持续丢失」高估。
+  - 0.2.7 发布与生产验收（2026-10-11 23:53–24:01）：CI run `38151946948` success（30 作业全绿）；`.so` 8,388,992 字节 sha256 `7e08d2d44adb…`，二进制内含新日志串且 `0.2.6` 计数为 0；commits `cbc1e74`/`dfa4bfb`/`29c9591`；生产 `plugin-store install` 前两次 502（CDN 边缘陈旧，重试即通）第三次 `installed restart_required:false`；宿主 `hot reloaded active_version=0.2.7 retired_version=0.2.6`；上线分钟出现 `reuse=1` 证明换句柄窗口已消除；`offset==size`、读接口与面板 217,901 字节与 0.2.6 完全一致；0.2.6 资产定向 prune（远端 200/404）。
+  - 0.2.8 发布与生产验收（2026-10-12 00:38–00:42）：CI run `38155105772` 30/30 全绿；`.so` 8,393,088 字节 sha256 `270cd96de2af…`，二进制内 `closed-store polls`=1 且 `store config unchanged`=1（两项修复同体）；commits 资产入库 + `89ddff0`(registry) + `f2e1c7c`(prune 0.2.7)；生产 `install?version=0.2.8` 首次即 `installed`，`active_version=0.2.8 retired_version=0.2.7`，`panic/fuse`=0，面板 217,901 字节与 0.2.7 逐字节同尺寸（图表标记仍全 0、`groups`/`requestRows`/`cards`/`provider` 保留）；远端 0.2.8=200、0.2.7=404。⚠️ `importer stopping after` 当前计数为 0 属**预期**：被退役的是无退出逻辑的 0.2.7 实例，该日志最早在下一次升级退役 0.2.8 时出现；同时泄漏代价已量化（安装后 2 分钟 `ok=72 fail=484`，比值随当天发布次数线性增长），旧协程需一次容器重启才能回收，交用户裁定。
 - 当前会话（2026-10-11）：**OAuth 未授权假成功漏洞修复与 TraeWork 推理流 Keep-Alive 闲置挂起提速，升级并发布 `qoderwork-provider 0.9.29`、`qoder-ai-provider 0.1.8`、`traework-provider 0.2.6`**：
   - 用户反馈与目标：
     1. 发现登录授权严重异常：还没有打开链接进行授权，系统就自动认证成功了（假成功漏洞），需要彻底修复并发布生产。
