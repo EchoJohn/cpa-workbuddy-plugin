@@ -69,6 +69,7 @@ func streamClose(streamID string) {
 	actual, _ := streamCloseOnce.LoadOrStore(streamID, &sync.Once{})
 	once := actual.(*sync.Once)
 	once.Do(func() {
+		defer streamCloseOnce.Delete(streamID)
 		body, _ := json.Marshal(map[string]any{"stream_id": streamID})
 		_, _ = hostCall(pluginabi.MethodHostStreamClose, body)
 	})
@@ -80,6 +81,63 @@ func streamHeaders() http.Header {
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Accel-Buffering", "no")
 	return h
+}
+
+// parseQoderSSEChunk parses one SSE line from upstream.
+// It handles:
+// 1. Direct [DONE] lines (with or without "data:" prefix and whitespace).
+// 2. Nested Qoder envelope: {"body": "<json>"} or {"body": "[DONE]"}.
+// 3. Flat OpenAI SSE chunk: {"id":..., "choices":[...]}.
+// Returns the unwrapped inner OpenAI JSON string and whether this line indicates stream completion.
+func parseQoderSSEChunk(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, ":") {
+		return "", false
+	}
+	if !strings.HasPrefix(trimmed, "data:") {
+		return "", false
+	}
+	payload := stripDataPrefix(trimmed)
+	if payload == "" {
+		return "", false
+	}
+	if payload == "[DONE]" {
+		return "", true
+	}
+
+	var outer map[string]any
+	if err := json.Unmarshal([]byte(payload), &outer); err != nil {
+		if strings.TrimSpace(payload) == "[DONE]" {
+			return "", true
+		}
+		return "", false
+	}
+
+	// 1. Nested Qoder envelope: outer["body"]
+	if bVal, ok := outer["body"]; ok && bVal != nil {
+		if bodyStr, isStr := bVal.(string); isStr {
+			cleanedBody := stripDataPrefix(bodyStr)
+			if cleanedBody == "[DONE]" {
+				return "", true
+			}
+			return cleanedBody, false
+		}
+	}
+
+	// 2. Flat OpenAI SSE chunk (already unnested)
+	if _, hasChoices := outer["choices"]; hasChoices {
+		return payload, false
+	}
+	if _, hasID := outer["id"]; hasID {
+		return payload, false
+	}
+
+	// 3. In-stream error frame in outer
+	if _, hasErr := outer["error"]; hasErr {
+		return payload, false
+	}
+
+	return "", false
 }
 
 // pumpUpstreamStream reads the upstream SSE response in the background and
@@ -134,7 +192,7 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 	// 前置冷却拦截：若初始账号在冷却中，直接切换到健康账号，不发送自杀式请求
 	if encodedBody != "" && (isAccountCoolingDown(curAuthID) || isAccountCoolingDown(curAuthUID)) {
 		if nextID, nextSA, hasNext := pickNextAuth(curAuthID); hasNext && nextSA != nil {
-			if nextReq, rebErr := rebuildRequestWithQoderAuth(nextSA, encodedBody, upstreamModel); rebErr == nil {
+			if nextReq, rebErr := rebuildRequestWithQoderAuth(nextSA, encodedBody, upstreamModel, curReq.Context()); rebErr == nil {
 				curReq = nextReq
 				curAuthID = nextID
 				curAuthUID = nextSA.Account.UID
@@ -179,12 +237,13 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 			// Pick the next account and rebuild the request against its
 			// COSY signature. If nothing else is usable, surface the
 			// original error.
+			evictSessionBindingsForAuth(curAuthID)
 			nextID, nextSA, hasNext := pickNextAuth(curAuthID)
 			if !hasNext || nextSA == nil {
 				streamEmitError(streamID, fmt.Sprintf("upstream %d: %s", statusCode, truncateRedacted(errPayload, 200)))
 				return
 			}
-			nextReq, rebErr := rebuildRequestWithQoderAuth(nextSA, encodedBody, upstreamModel)
+			nextReq, rebErr := rebuildRequestWithQoderAuth(nextSA, encodedBody, upstreamModel, curReq.Context())
 			if rebErr != nil {
 				streamEmitError(streamID, fmt.Sprintf("upstream %d: %s (retry rebuild failed: %v)", statusCode, truncateRedacted(errPayload, 200), rebErr))
 				return
@@ -212,27 +271,19 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 		scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 		for scanner.Scan() {
 			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
-				continue
-			}
-			payload := strings.TrimPrefix(line, "data:")
-			var outer map[string]any
-			if json.Unmarshal([]byte(payload), &outer) != nil {
-				continue
-			}
-			bodyStr, ok := outer["body"].(string)
-			if !ok {
-				continue
-			}
-			if bodyStr == "[DONE]" {
+			chunkJSON, isDone := parseQoderSSEChunk(line)
+			if isDone {
 				break
 			}
-			collector.feed(bodyStr)
-			if msg := sseErrorFrame(bodyStr); msg != "" {
+			if chunkJSON == "" {
+				continue
+			}
+			collector.feed(chunkJSON)
+			if msg := sseErrorFrame(chunkJSON); msg != "" {
 				sseErr = fmt.Sprintf("upstream %d: %s", statusCode, truncateRedacted(msg, 200))
 				break
 			}
-			cleaned := cleanChunkJSON(bodyStr)
+			cleaned := cleanChunkJSON(chunkJSON)
 			if cleaned == "" {
 				continue
 			}
@@ -275,7 +326,7 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 				streamEmitError(streamID, sseErr)
 				return
 			}
-			nextReq, rebErr := rebuildRequestWithQoderAuth(nextSA, encodedBody, upstreamModel)
+			nextReq, rebErr := rebuildRequestWithQoderAuth(nextSA, encodedBody, upstreamModel, curReq.Context())
 			if rebErr != nil {
 				streamEmitError(streamID, fmt.Sprintf("%s (retry rebuild failed: %v)", sseErr, rebErr))
 				return
@@ -336,7 +387,9 @@ func collectUpstreamStreamQoder(encodedBody string, sa *storedAuth, modelKey str
 	}
 
 	for attempt := 0; attempt <= budget; attempt++ {
-		httpReq, err := http.NewRequest(http.MethodPost, endpointChat, strings.NewReader(encodedBody))
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointChat, strings.NewReader(encodedBody))
 		if err != nil {
 			return nil, 0, err
 		}
@@ -365,6 +418,7 @@ func collectUpstreamStreamQoder(encodedBody string, sa *storedAuth, modelKey str
 			if currentID == "" {
 				currentID = strings.TrimSpace(curSA.Account.UID)
 			}
+			evictSessionBindingsForAuth(currentID)
 			_, nextSA, hasNext := pickNextAuth(currentID)
 			if !hasNext || nextSA == nil {
 				return nil, statusCode, errResp
@@ -378,28 +432,23 @@ func collectUpstreamStreamQoder(encodedBody string, sa *storedAuth, modelKey str
 		scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 		for scanner.Scan() {
 			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
-				continue
+			chunkJSON, isDone := parseQoderSSEChunk(line)
+			if isDone {
+				break
 			}
-			payload := strings.TrimPrefix(line, "data:")
-			var outer map[string]any
-			if json.Unmarshal([]byte(payload), &outer) != nil {
-				continue
-			}
-			bodyStr, ok := outer["body"].(string)
-			if !ok || bodyStr == "[DONE]" {
+			if chunkJSON == "" {
 				continue
 			}
 			if collector != nil {
-				collector.feed(bodyStr)
+				collector.feed(chunkJSON)
 			}
-			if msg := sseErrorFrame(bodyStr); msg != "" {
+			if msg := sseErrorFrame(chunkJSON); msg != "" {
 				// 200 内业务错误帧（同步路径）：与 4xx 同责处理，跳出后
 				// 走统一换号判定。（同步自 workbuddy 200 错误帧换号）
 				sseErrMsg = msg
 				break
 			}
-			cleaned := cleanChunkJSON(bodyStr)
+			cleaned := cleanChunkJSON(chunkJSON)
 			if cleaned == "" {
 				continue
 			}
@@ -423,6 +472,7 @@ func collectUpstreamStreamQoder(encodedBody string, sa *storedAuth, modelKey str
 			if currentID == "" {
 				currentID = strings.TrimSpace(curSA.Account.UID)
 			}
+			evictSessionBindingsForAuth(currentID)
 			_, nextSA, hasNext := pickNextAuth(currentID)
 			if !hasNext || nextSA == nil {
 				return chunks, http.StatusOK, errResp
@@ -669,35 +719,20 @@ func aggregateCompletion(r io.Reader, model string, statusCode int) ([]byte, err
 // Terminal frames: data:{"body":"[DONE]"} followed by an event:finish line
 // with timing metadata (ignored).
 func aggregateQoderSSE(r io.Reader, model string, statusCode int) ([]byte, error) {
-	// Unwrap the nested SSE into an inner plain-text stream of OpenAI chunks,
-	// then delegate to aggregateCompletion. We materialise the inner stream
-	// into memory because the gateway's SSE is short-lived (one chat call)
-	// and the inner stream is at most a few hundred KB.
 	var inner strings.Builder
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
-			// Skip event:/id:/retry:/comment lines
-			continue
-		}
-		payload := strings.TrimPrefix(line, "data:")
-		var outer map[string]any
-		if err := json.Unmarshal([]byte(payload), &outer); err != nil {
-			continue
-		}
-		bodyStr, ok := outer["body"].(string)
-		if !ok {
-			continue
-		}
-		if bodyStr == "[DONE]" {
+		chunkJSON, isDone := parseQoderSSEChunk(line)
+		if isDone {
 			break
 		}
-		// Re-emit the inner JSON as a standard "data:<json>\n" SSE frame so
-		// aggregateCompletion's parser can consume it unchanged.
+		if chunkJSON == "" {
+			continue
+		}
 		inner.WriteString("data:")
-		inner.WriteString(bodyStr)
+		inner.WriteString(chunkJSON)
 		inner.WriteString("\n\n")
 	}
 	if err := scanner.Err(); err != nil {

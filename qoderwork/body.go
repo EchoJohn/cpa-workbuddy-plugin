@@ -130,14 +130,20 @@ type openAIRequest struct {
 	Stream   bool            `json:"stream"`
 }
 
-// extractLatestUserPrompt returns the content of the last user message.
+// extractLatestUserPrompt returns the content of the last user message,
+// with safe fallback to the latest non-empty message or "continue" if none found.
 func extractLatestUserPrompt(messages []openAIMessage) string {
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
+		if messages[i].Role == "user" && strings.TrimSpace(messages[i].Content) != "" {
 			return messages[i].Content
 		}
 	}
-	return ""
+	for i := len(messages) - 1; i >= 0; i-- {
+		if strings.TrimSpace(messages[i].Content) != "" {
+			return messages[i].Content
+		}
+	}
+	return "continue"
 }
 
 // buildQoderBody renders the upstream agent_chat_generation body for one request.
@@ -206,8 +212,9 @@ func buildQoderBody(req *openAIRequest, modelKey, userType string) ([]byte, erro
 	if biz, ok := base["business"].(map[string]any); ok {
 		biz["id"] = uuid.NewString()
 		biz["begin_at"] = time.Now().UnixMilli()
-		if len(prompt) > 30 {
-			biz["name"] = prompt[:30]
+		runes := []rune(prompt)
+		if len(runes) > 30 {
+			biz["name"] = string(runes[:30])
 		} else {
 			biz["name"] = prompt
 		}

@@ -62,6 +62,11 @@ func pickNextAuth(currentAuthID string) (nextAuthID string, nextSA *storedAuth, 
 		if isAccountCoolingDown(id) {
 			continue
 		}
+		// 「测试」accounts are unusable by product definition — they must not
+		// be picked up as an in-flight retry target either.
+		if isTestFailed(id) {
+			continue
+		}
 		// Skip candidates with no usable auth index — we can't load
 		// their stored body, so retrying on them would fail
 		// identically and burn a budget slot.
@@ -96,13 +101,17 @@ func pickNextAuth(currentAuthID string) (nextAuthID string, nextSA *storedAuth, 
 //
 // The caller keeps the original request untouched for its own retry book-
 // keeping; this function only needs the (account-independent) encoded body
-// and the upstream model key that goes into x-model-key.
-func rebuildRequestWithQoderAuth(sa *storedAuth, encodedBody, modelKey string) (*http.Request, error) {
+// and the upstream model key that goes into x-model-key. When an optional
+// ctx is passed, it is inherited so cancellation and timeouts propagate.
+func rebuildRequestWithQoderAuth(sa *storedAuth, encodedBody, modelKey string, ctx ...context.Context) (*http.Request, error) {
 	if sa == nil {
 		return nil, fmt.Errorf("rebuildRequestWithQoderAuth: nil stored auth")
 	}
-	ctx := context.Background()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointChat, strings.NewReader(encodedBody))
+	reqCtx := context.Background()
+	if len(ctx) > 0 && ctx[0] != nil {
+		reqCtx = ctx[0]
+	}
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpointChat, strings.NewReader(encodedBody))
 	if err != nil {
 		return nil, err
 	}

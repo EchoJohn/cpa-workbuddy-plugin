@@ -1,6 +1,16 @@
 # QoderWork Plugin Changelog
 
-## 0.9.27
+## 0.9.28
+
+### Fix - 模型推理请求终止契约与超时加固（对齐 WorkBuddy 成熟机制）
+
+- 变更要点:
+  1. 根因收敛：排查定位到 `collectUpstreamStreamQoder` 遇到 `[DONE]` 误用 `continue` 未退出循环导致 Keep-Alive 挂死至网关长超时；顶层裸 `data: [DONE]` 等多种终止符在 JSON 失败后被静默跳过；`rebuildRequestWithQoderAuth` 丢失请求级 Context 无法级联超时与取消；`doExecuteOnceQoder` 缺少 Context 超时；`buildQoderBody` 存在按字节截断损坏多字节 UTF-8 字符的隐患。
+  2. 终止契约加固：抽取统一的 `parseQoderSSEChunk`，同时覆盖顶层 `data: [DONE]`、嵌套信封 `outer["body"]` 为 `[DONE]` 及扁平 OpenAI chunk 格式，遇到终止符即刻 `break` 退出并主动关闭流。
+  3. 全链路 Context 与超时保护：`rebuildRequestWithQoderAuth` 继承请求 Context；`collectUpstreamStreamQoder` 与 `doExecuteOnceQoder` 施加 10 分钟预算超时；换号重试前统一调用 `evictSessionBindingsForAuth` 避免死锁。
+  4. 健壮性与内存治理：`biz["name"]` 采用 `[]rune(prompt)[:30]` 字符切片；`extractLatestUserPrompt` 增加非 user 消息与 `"continue"` 降级兜底；`streamClose` 增加延迟清理消除 map 内存泄漏。
+  5. 回归测试：新增 `stream_inference_hardening_test.go`，经哨兵必失败反证确证真实进入编译并全绿通过。
+- 涉及文件: qoderwork/stream.go、qoderwork/main.go、qoderwork/body.go、qoderwork/failover_retry.go、qoderwork/stream_inference_hardening_test.go、qoderwork/VERSION、qoderwork/CHANGELOG.md
 
 ### Fix - CN 每日签到改走 campaigns（活动）API，修复「返回刷新成功但积分不变」
 

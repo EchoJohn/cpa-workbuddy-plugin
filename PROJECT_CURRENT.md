@@ -2,17 +2,66 @@
 
 ## 目标与范围
 
-- 目标：维护 CLIProxyAPI (CPA) 的 Go 原生插件 `cpa-workbuddy-plugin`，将腾讯 CodeBuddy（国内版）、WorkBuddy AI（独立国际版）、Trae SOLO、Google Gemini CLI、Cursor（cursor.sh）封装为 OpenAI 兼容 provider，提供多账号管理、动态模型、流式转发、专属面板、扫码登录、保号巡检，并通过统一 token 用量统计服务。
-- 范围：仓库内 workbuddy-provider / workbuddy-ai-provider / traework-provider / gemini-provider / cursor-provider / workbuddy-token-usage（历史归档 qoderwork-provider）的代码实现、测试、资产构建、发布流水线、registry 同步等。
+- 目标：维护 CLIProxyAPI (CPA) 的 Go 原生插件套件 `cpa-workbuddy-plugin`（涵盖 8 大 AI 服务商 Provider + 1 统一用量统计插件），提供多账号管理、动态模型发现、流式转发、专属现代管理控制台、扫码/Token 登录、保号巡检与统一 token 用量统计分析服务。
+- 范围：仓库内 9 大插件体系的代码实现、单元测试、资产构建、发布流水线、registry 元数据同步等：
+  1. `workbuddy-provider`：腾讯 CodeBuddy（国内版与 Global 版）；
+  2. `workbuddy-ai-provider`：WorkBuddy AI（独立国际版）；
+  3. `traework-provider`：Trae SOLO（字节跳动海外/国内 AI IDE 客户端）；
+  4. `qoderwork-provider`：QoderWork（阿里通义灵码衍生国内版）；
+  5. `qoder-ai-provider`：Qoder AI（国际版 qoder.com，含 UMID 协议支持）；
+  6. `cursor-provider`：Cursor（cursor.sh，Connect-RPC 协议与会话连续性）；
+  7. `zcode-provider`：ZCode（BigModel Coding Plan，Anthropic 兼容与客户端真实指纹 mimic）；
+  8. `gemini-provider`：Google Gemini CLI；
+  9. `workbuddy-token-usage`：统一 Token 用量统计与实时看板服务。
 - 非范围：CLIProxyAPI 核心服务本体；跨项目文件修改。
 
 ## 项目概况
 
-- 状态：活跃维护中。最新发布版本：qoder-ai-provider **0.1.6**（纯 Go 实现阿里云安全盾 UMID 客户端协议与独立设备指纹派生，彻底修复国际版签到活动被上游隐藏及同机多账号风控拦截问题，生产单账号真实 +100 积分验证通过）/ traework-provider **0.2.5**（修复签到 x-device-id 拼接与尾零风控 9074 拦截 + 自动签到调度器绝对时间对齐）/ qoderwork-provider **0.9.27**（CN 签到端点迁移 campaigns，修复「返回刷新成功但积分不变」）/ workbuddy-provider **0.15.4** / workbuddy-ai-provider **0.1.9** / workbuddy-token-usage **0.2.4** / cursor-provider **0.1.3** / gemini-provider **0.1.1** / zcode-provider **0.1.1**。
+- 状态：活跃维护中。9 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。最新发布/就绪版本：
+  - `qoder-ai-provider`: **0.1.6**（纯 Go 实现阿里云安全盾 UMID 协议与设备指纹，彻底修复签到活动隐藏与风控拦截，生产真实验证通过）
+  - `cursor-provider`: **0.1.3**（消除双菜单重复注册、全量对齐 WorkBuddy/ZCode 现代设计规范、接入统一 Token 用量流）
+  - `zcode-provider`: **0.1.1**（全新完成移植接入：BigModel Coding Plan Anthropic 协议、客户端桌面指纹 mimic、多账号与探活面板）
+  - `traework-provider`: **0.2.5**（修复签到 x-device-id 尾零风控拦截 9074、调度器绝对时间对齐、默认会话路由与配置动态联动打通）
+  - `qoderwork-provider`: **0.9.27**（CN 签到端点迁移 campaigns，彻底移除保号池，对齐测试标签与低积分排序调度）
+  - `workbuddy-provider`: **0.15.4**（5 模型轮测探活、移除保号池、硬排除测试标签 + 低积分优先）
+  - `workbuddy-ai-provider`: **0.1.9**（补齐完整路由层单测资产、5 模型轮测探活、国际版签到）
+  - `gemini-provider`: **0.1.1**
+  - `workbuddy-token-usage`: **0.2.4**（移除短轮询，改手动刷新并全面接入 Cursor/Gemini/ZCode 供应商归一化映射）
 - 活动工作区：F:\cpa-plugin
 - 当前时间：2026-10-11 (GMT+8)
 
 ## 活动会话进展摘要
+
+- 当前会话（2026-10-11）：**QoderWork 与 Qoder AI 两插件模型推理请求终止契约与长超时加固（对齐 WorkBuddy 成熟机制）**：
+  - 用户反馈与目标：测试出 Qoder 的两个插件模型请求有些问题，不稳定且有时候超时时间很长，要求参考 WorkBuddy 插件排查推理请求不完善之处并彻底修复。
+  - 核心根因定位（多维收敛）：
+    1. **同步 collect 路径遇到 [DONE] 误用 continue 导致死等长超时**：`collectUpstreamStreamQoder` 历史代码对 `bodyStr == "[DONE]"` 误用了 `continue` 而非 `break`；上游长连接 Keep-Alive 未断开时扫描器永久挂起，直到底层长超时。
+    2. **多种 [DONE] 协议形态无法被识别**：上游发送的顶层裸 `data: [DONE]`、带空格或换行的变体在反序列化 JSON 失败后被静默跳过，未能触发 `break`，流式响应迟迟不 close 导致客户端长时间转圈等待。
+    3. **换号重试 Context 丢失与挂死**：`rebuildRequestWithQoderAuth` 丢失了请求级 Context（硬编码 `context.Background()`），客户端断开时无法级联取消上游请求，后台 goroutine 持续占用资源；且换号前缺失会话粘性驱逐（`evictSessionBindingsForAuth`）。
+    4. **非流式执行无超时控制**：`doExecuteOnceQoder` 未施加 Context 超时控制，上游无响应时无限挂起。
+    5. **UTF-8 字符截断与 prompt 为空隐患**：`buildQoderBody` 中 `prompt[:30]` 按字节截断易切断多字节中文制造非法 UTF-8，且无 user 消息时直接 500 报错。
+  - 实施修复与系统实现（两插件完全对齐）：
+    1. **抽取出统一的 `parseQoderSSEChunk`**：同时识别顶层 `[DONE]`、嵌套信封 `[DONE]` 及扁平 OpenAI chunk，遇到终止即刻 `break` 退出循环并关闭流。
+    2. **全链路 Context 超时与会话驱逐对齐**：`rebuildRequestWithQoderAuth` 支持继承 Context；非流式与同步路径施加 10 分钟预算超时；换号前统一驱逐会话绑定。
+    3. **UTF-8 安全截断与 prompt 降级兜底**：使用 `[]rune(prompt)[:30]` 字符切片；`extractLatestUserPrompt` 增加非 user 消息优雅降级。
+    4. **消除 streamCloseOnce 内存泄露**：在 `once.Do` 执行后主动清理 map 条目。
+  - 验证与门禁全绿：
+    - `python scripts/cgo-shim-build.py qoderwork` build/vet/test 全绿（7.112s）；
+    - `python scripts/cgo-shim-build.py qoder-ai` build/vet/test 全绿（7.188s）；
+    - `python scripts/cgo-shim-build.py workbuddy` 基线验证全绿（11.273s）；
+    - 新增单测通过并经必失败哨兵反证确证真实进入编译；
+    - 6-review 风格回归归档 `doc/6-review/2026-10-11_173500_Qoder插件推理请求终止契约与超时加固_6-review.md`（STYLE: PASS）；
+    - 知识库沉淀 `Qoder插件推理请求终止契约与KeepAlive超时规避.md`。
+
+- 当前会话（2026-10-11）：**吸收「生产容器重启红线」到项目规则与 skill（非必要不重启 cpa 容器）**：
+  - 用户口径：非必要不要重启生产的 cpa 容器；插件的更新安装一般不需要重启（`plugin-store install` 热重载即生效）。
+  - 依据与风险：install 默认返回 `restart_required:false`，`docker logs cli-proxy-api | grep "hot reloaded"` 可见 `active_version` 生效；重启 `cli-proxy-api` 会中断在线流量并触发 60–80 秒冷启动（9 插件 + 模型刷新），属高成本、高影响操作。
+  - 落点（四处同步）：
+    1. `AGENTS.md` / `CLAUDE.md`「项目特有规则 → 仓库与发布」新增「生产容器重启红线（非必要不重启，强制）」；
+    2. 项目 skill `project-cpa-workbuddy-plugin-release-rules`：Step 13 校验项改用 `docker logs | grep "hot reloaded"` 判定（明确不需重启）、Step 13 新增重启红线条、权责边界末条由「提醒用户重启宿主」改为「不主动重启生产 cpa 容器」；
+    3. 项目 skill `project-cpa-workbuddy-plugin-host-config-safety-rules`：配置写入红线新增第 7 条（配置损坏恢复为重启的必要例外，恢复流程 Step 4 同步注明）；
+    4. 两个 skill 的 `references/source-notes.md` 追加变更记录；`PROJECT_MEMORY.md`（核心记忆 + 变更记录）与 `PROJECT_HISTORY.md`（事件 + 计数锚点）同步。
+  - 例外边界：仅在热重载经证据确认未生效（如踩坑 48 偶发形态）或生产配置损坏恢复等必要场景，且用户明确确认时才重启；否则保持容器运行，把重启时机交用户决定。
 
 - 当前会话（2026-10-11）：**Qoder AI 国际版签到活动 UMID 设备指纹与多账号风控拦截修复，发布部署 `qoder-ai-provider 0.1.6` 并完成生产真实 +100 积分与批量签到验收**：
   - 用户反馈与目标：用户指出 Qoder AI 签到仍有问题，客户端显示可以签到（每日 100 Credits 20:35:13，每日 10:00 UTC+8 刷新），但生产上的账号一个都无法真正签到成功，积分没有增加，要求彻底修复。
@@ -185,44 +234,6 @@
   - 发布闭环：commit ce6b4e2（32 文件）→ CI 三 run success（37940758486 / 37940778484 / 37940786472，head=ce6b4e2）→ 资产 commit fe5742d（24 文件，三目录 7/7 sha256 OK）→ registry 回填 commit 207e22c → prune 旧版 commit ada831f；远端 49/49 当前资产 200、旧版（0.15.3 / 0.1.8 / 0.2.2）404。
   - 生产部署：三插件 plugin-store install 全部 installed；落盘 .so sha256 与本地 zip 完全一致（workbuddy 0.15.4 9c3b85b6… / workbuddy-ai 0.1.9 dd77aab4… / traework 0.2.3 2d671e16…）；热重载 active_version 命中目标版本；panel / accounts 三插件全 200。
   - 生产行为验收：/models 三插件返回真实模型（17 / 27 / 大量）；缺 auth_index 返回 auth_index is required；/test-active 指定 deepseek-v4.1-flash → traework 成功（1.625s，回显该 model），workbuddy 因额度 429 但错误文案确认使用指定模型。
-
-- 当前会话（2026-10-07）：**固化「发布后清理」规则 + release-assets 瘦身**。
-  - 用户要求：把「每次发布后都需要清理不需要的垃圾」吸收到项目 skill 与规则中。
-  - 落地：新增项目 skill `project-cpa-workbuddy-plugin-release-asset-prune-rules`（保留集=registry 每插件当前版本目录）+ 通用脚本 `scripts/prune-release-assets.py`（--dry-run/--apply，受跟踪目录 git rm、空目录 rmdir）；`AGENTS.md`/`CLAUDE.md`「仓库与发布」小节新增「发布后清理」条；发布 skill 增 Step 13.5 并更新 description。
-  - 实操：`release-assets` 3.75 GB → 0.13 GB（删 185 个历史版本目录 / 1469 文件，保留 registry 当前 6 个版本目录），提交 `095f4a4` 推送 `origin/main`；远端当前版本 raw 200、旧版本 404。
-
-- 当前会话（2026-10-07）：**移植 Cursor Provider 插件并新增会话 Token 导入账号能力（cursor-provider 0.1.0）**。
-  - 来源：`https://github.com/yobo2u/omsub`（cursor 分支）的 cursor-plugin，按 workbuddy 面板口径全量移植并改造，落在独立插件 `cursor/`（id `cursor-provider`），不依赖 CLIProxyAPI SDK。
-  - Token 导入链路：粘贴 `user_<id>::<jwt>`（或 URL 编码 / Cookie 前缀 / 裸 JWT）→ 取 `::` 后段 JWT → `POST https://api2.cursor.sh/oauth/token`（grant_type=refresh_token + client_id + refresh_token）兑换 access_token → `host.auth.save` 落盘为 `cursor-<hash8>.json`（顶层 type=cursor-provider）；按 account_id/email 去重。
-  - 管理面板：import / export / delete / enable / disable 五条路由 + 卡片删除/启停、全部启停、导入弹窗、导出、双语 i18n、key 三回退，与 workbuddy 面板一致。
-  - 保留移植全量能力：OAuth 轮询登录、executor tool-loop、checkpoint/会话粘性、图片输入、上下文准入。
-  - 验证：`python scripts/cgo-shim-build.py cursor` build/vet/test 全绿（含必失败哨兵）；面板单 script 块 node --check 通过；cursor 全量 LF 镜像 gofmt -l 清零；6-review STYLE: PASS。
-  - CI/registry：.github/workflows/build.yml 增 cursor-provider-v* tag、dispatch option、test/build 矩阵；registry.json 增 cursor-provider 0.1.0（7 平台 artifacts）。
-  - **发布闭环（已完成）**：commit 44d2bb4 → push；CI run 37636155616 全 57 jobs success；下载 8 资产（7 zip + checksums）并校验 ALL OK，commit a17c2aa；publish-assets 回填 registry（commit 92f569c）；远端 raw 7 资产 size+sha256 ALL PASS；生产 plugin-store install 0.1.0，落盘 .so sha256 与本地 zip 100% 一致，容器日志 plugin loaded + plugin registered 热重载成功；plugin-store 状态 installed/registered/enabled/effective_enabled 全 true。
-  - **生产端到端验收（已完成）**：真实 token 导入 → oauth/token 兑换 → 落盘 cursor-6c2463e563a13c02.json → 面板可见（246 模型）→ 重复导入正确去重；推理验收 cursor/default 非流式 3 次 + 流式（1..5 完整 + finish_reason:stop + [DONE]）+ 多轮全部成功；export 接口 200。高级模型（gpt-5.3-codex / composer-2.5 / claude-4-sonnet / gemini-3.x 等）返回上游 resource_exhausted（429，约 280ms 快速拒绝），属 Cursor 服务端对该账号订阅的配额判定，插件按真实 429 语义透传，非移植缺陷。
-  - 发布后清理：release-assets prune dry-run 确认 7 保留集完整、无待删；本地缓存 .workbuddy/release-assets 已删。
-- 当前会话（2026-10-07）：**定位新授权账号离奇消失根因，彻底移除自动物理删除机制，发布并部署 WorkBuddy AI 0.1.6**。
-  - 用户反馈：刚刚成功授权了一个号，出现在了面板中，但很短的时间过后账号消失了；
-  - 核心排查与根因：
-    1. 13:52:07 账号授权成功创建（workbuddyai-3d749a7f-ec76-4a55-a316-37d86c9ff47c.json）；
-    2. 13:52:09 有并发请求调用该账号，上游接口返回 upstream 429: Credits exhausted（code: 14018），命中 isHardCreditError；
-    3. 旧逻辑中将 Global 账号生命周期硬编码为 lifecycleDelete，触发 reconcileOneAccount 后二次调用 fetchUserResource 确认 0 额度，随即执行 deleteAuth 物理删除了磁盘文件；
-  - 架构与生命周期对齐修复 (v0.1.6)：
-    1. 彻底将 lifecycleActionFor 返回值调整为 lifecycleDisable（仅软禁用，绝不物理删除账号），与国内版完全对齐；
-    2. 放开通用恢复通道：去除 cn 专属判定，当 disabled 账号在后续充值或刷新中检测到 remain > 0 时自动重新激活（lifecycleReenable）；
-    3. 修正专属管理面板前端 region 默认 fallback 为 global；
-    4. 单测补充断言并通过必失败哨兵编译验证；版本 bump 至 0.1.6，GitHub Actions 48 个构建任务全绿；
-    5. 8 个 Release 资产已下载入库并推送到 GitHub，registry.json 0.1.6 校验全绿并推送，生产服务器已成功热重载加载 0.1.6。
-
-
-- 当前会话（2026-10-07）：**定位模型未展示根因、支持双重 agent 结构与 default 映射，并全链路发布部署 WorkBuddy AI 0.1.5**。
-  - 用户反馈：截图反馈“该凭证暂无可用模型 / 该认证凭证可能尚未被服务器加载或没有绑定任何模型”。
-  - 核心排查与根因收敛：
-    1. **截图时段与旧版本原因**：用户截图时间为今日凌晨 03:21:35，当时线上运行为旧版 0.1.3，其错误请求内网 `/console/enterprises/personal/models` 返回 500 导致动态发现失败；
-    2. **凭证禁用状态注销机制**：截图显示该凭证右侧处于【未启用】（灰色禁用）状态。CPA 宿主核心（`service_models.go`）设计规定，禁用凭证立即从 `ModelRegistry` 注销，故点击模型弹窗返回空；
-    3. **上游真实协议结构增强兼容 (v0.1.5)**：`https://www.workbuddy.ai/v3/config` 结构增加 `data.agent.agents` 与 `data.agents` 双重提取兼容，增强 `default` / `default-model` 至 `auto` 映射，并补齐带前缀的可观测动态发现日志；
-    4. **单测与全架构 CI**：单测覆盖嵌套 agent 结构及 auto 别名继承，全绿通过；版本 bump 至 0.1.5，CI（Run ID: 37575092982）48 个任务构建全绿；
-    5. **资产同步与生产热更新**：下载 8 个 Release 资产入库推送到 main，同步更新 `registry.json` 并通过校验，在生产服务器完成 0.1.5 热重载加载生效。
 
 <!-- BEGIN RECENT PROJECT SESSIONS -->
 ## 最近 5 个同项目会话

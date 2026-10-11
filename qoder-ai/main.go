@@ -344,7 +344,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "0.1.6"
+var version = "0.1.7"
 
 func wbRegistration() registration {
 	return registration{
@@ -698,8 +698,12 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 	// Build the Qoder AI agent_chat_generation body from the OpenAI request,
 	// then QoderEncoding-encode it. The template embeds a 10657-token system
 	// prompt that the server requires for normal behaviour (KNOWLEDGE §5.2).
+	bodyRaw := req.Payload
+	if len(bodyRaw) == 0 {
+		bodyRaw = req.OriginalRequest
+	}
 	qwReq := &openAIRequest{}
-	if err := json.Unmarshal(req.Payload, qwReq); err != nil && len(req.Payload) > 0 {
+	if err := json.Unmarshal(bodyRaw, qwReq); err != nil && len(bodyRaw) > 0 {
 		publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, 0, "payload parse: "+err.Error(), "", 0, accountLabel, sessionKey)
 		return nil, fmt.Errorf("payload parse: %w", err)
 	}
@@ -783,6 +787,7 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 		if currentID == "" {
 			currentID = strings.TrimSpace(curSA.Account.UID)
 		}
+		evictSessionBindingsForAuth(currentID)
 		_, nextSA, hasNext := pickNextAuth(currentID)
 		if !hasNext || nextSA == nil {
 			break
@@ -827,7 +832,9 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 // "upstream N: ..." or "http_error: ..." shape that
 // parseUpstreamStatusFromErr understands.
 func doExecuteOnceQoder(encodedBody string, sa *storedAuth, upstreamModel, requestedModel string) ([]byte, error) {
-	httpReq, err := http.NewRequest(http.MethodPost, endpointChat, strings.NewReader(encodedBody))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointChat, strings.NewReader(encodedBody))
 	if err != nil {
 		return nil, err
 	}
