@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.15.5
+
+### Feat - 自动探活支持随机 5 模型轮测与 20s 超时
+
+- 变更要点:
+  1. 定时活跃探活改为随机挑选最多 5 个模型依次测试，单次请求超时从 10s 放宽至 20s，叠加 30s 整轮预算熔断。
+  2. 探活成功判定改为 any-success：任意一个模型成功即判定账号健康并立即终止后续测试，只有全部候选模型均失败才判定为探活失败。
+  3. 大幅降低因单模型瞬时故障或下线导致的正常账号被误打「测试」标签并被调度硬排除的误杀率。
+  4. 面板手动「测试」按钮保持指定模型或随机兜底行为不变。
+- 涉及文件: workbuddy/active_ping.go、workbuddy/active_ping_test.go、workbuddy/main.go、workbuddy/VERSION、workbuddy/CHANGELOG.md
+
+### Feat - 推理请求补齐使用端标识头
+
+- 变更要点:
+  1. 聊天补全请求新增 `X-IDE-Type`、`X-IDE-Name`（值 `WorkBuddy`）与 `X-Agent-Purpose`（值 `conversation`），与官方客户端请求头契约一致。
+  2. 上游用量记录的 `client`（使用端）字段由空值变为 `WorkBuddy`，请求可被上游正确归属。
+  3. 单变量对照证实 `client` 由 `X-IDE-Name` 决定、`agentPurpose` 由 `X-Agent-Purpose` 决定，两字段相互独立。
+- 涉及文件: workbuddy/main.go、workbuddy/VERSION、workbuddy/CHANGELOG.md、test/workbuddy/backend_headers_test.go
+
 ## 0.15.4
 
 ### Feat - 「测试」按钮支持选择指定模型

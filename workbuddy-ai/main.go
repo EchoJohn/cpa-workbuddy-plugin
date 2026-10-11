@@ -287,7 +287,7 @@ type registrationCapability struct {
 	UsagePlugin           bool                         `json:"usage_plugin"`
 }
 
-var version = "0.1.9"
+var version = "0.1.10"
 
 func wbRegistration() registration {
 	return registration{
@@ -444,6 +444,10 @@ func endpointModelsFor(sa *storedAuth) string {
 	return upstreamBase + "/v3/config"
 }
 
+// backendHeaders 为聊天补全请求注入鉴权、使用端标识与来源头。
+// [参数] req: 待填充的 HTTP 请求; sa: 账号凭据对象。
+// [返回] 无。
+// 最近修改时间：2026-10-11 21:05:00 补使用端标识头，使上游记录 client 字段为 WorkBuddy
 func backendHeaders(req *http.Request, sa *storedAuth) {
 	commonHeaders(req)
 	if sa.Auth.AccessToken != "" {
@@ -463,6 +467,10 @@ func backendHeaders(req *http.Request, sa *storedAuth) {
 	}
 	req.Header.Set("X-Domain", "www.workbuddy.ai")
 	req.Header.Set("X-Product", "SaaS")
+	// 使用端标识：声明请求来自 WorkBuddy 客户端，供上游记录 client / agentPurpose 字段
+	req.Header.Set("X-IDE-Type", "WorkBuddy")
+	req.Header.Set("X-IDE-Name", "WorkBuddy")
+	req.Header.Set("X-Agent-Purpose", "conversation")
 	req.Header.Set("Origin", originReferer)
 	req.Header.Set("Referer", originReferer+"/")
 }
