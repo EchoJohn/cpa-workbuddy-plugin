@@ -169,8 +169,9 @@ func parseModelsConfig(v any) {
 }
 
 // filterExcludedModels 剔除宿主 oauth-excluded-models 中为 traework-provider 列出的模型。
-// 宿主不会替插件过滤，只有插件在模型出口自行过滤才能让该配置生效；同名裸模型被多个
-// OAuth 插件同时认领时，这是唯一能把模型从某个服务商摘掉的治理入口。
+// 宿主只在 model.for_auth 的按账号注册路径上替插件过滤（sdk/cliproxy/service_executors.go
+// 的 applyExcludedModels），model.static 返回的列表会被原样登记进全局模型目录，因此插件必须
+// 在出口自行过滤；同名裸模型被多个 OAuth 插件同时认领时，这是唯一能把模型从某个服务商摘掉的治理入口。
 // [参数] models: 已完成优先级解析的插件模型列表；host: 宿主随请求传入的配置摘要。
 // [返回] 过滤后的模型列表；宿主未配置排除项时原样返回入参。
 // 最近修改时间：2026-10-11 21:20:00；改动原因：补齐 traework 与 workbuddy/qoder-ai/qoderwork

@@ -7,7 +7,7 @@
 
 - 变更要点:
   1. 根因：`deepseek-v4.1-flash` 被 workbuddy-provider 与 traework-provider 同时动态认领（无任何插件把它写进静态列表），宿主 `oauth-excluded-models` 未配置且 traework 根本没有实现该过滤（workbuddy / workbuddy-ai / qoder-ai / qoderwork 均已实现），因此无法把该模型从配额枯竭的 Trae 号池摘掉；会话粘性又把会话钉在挂起的 Trae 账号上，单号 open 阶段串行消耗 30s 桥接 + 30s 降级直连共 60s 且期间不向客户端产出任何字节，客户端在 69~104s 零首字节后取消（new-api 侧 `end_reason=client_gone`、`frt=-1000`、`completion_tokens=0`）。
-  2. 修复：新增 `filterExcludedModels` 并在 `model.static` 与 `model.for_auth` 的全部返回出口应用，宿主 `oauth-excluded-models."traework-provider"` 自此生效；未配置排除项时原样返回入参，默认行为零变化。
+  2. 修复：新增 `filterExcludedModels` 并在 `model.static` 与 `model.for_auth` 的全部返回出口应用，宿主 `oauth-excluded-models."traework-provider"` 自此对 traework 完整生效；未配置排除项时原样返回入参，默认行为零变化。宿主侧只在 `model.for_auth` 的按账号注册路径过滤（`sdk/cliproxy/service_executors.go` 的 `applyExcludedModels`），`model.static` 返回列表会被原样登记进全局模型目录（`internal/pluginhost/adapters.go` 的静态注册段不过滤），所以插件出口过滤不可省略。
   3. 过滤返回新切片而非就地压缩，避免把已过滤列表写回 `dynamicTraeModelsCache` 造成后续全量列表被永久污染（与兄弟插件同源的 P0 别名缺陷）。
   4. 回归测试：新增 `models_excluded_test.go` 覆盖静态出口过滤、缺省配置零变化、provider 键大小写漂移、账号级出口过滤和动态缓存不被就地写回；用「排除项永不命中」语义变异反证 3 个用例全部失败后还原，确认测试真实进入编译且具备判别力。
 - 涉及文件: traework/models.go、traework/models_excluded_test.go、traework/VERSION、traework/main.go、traework/CHANGELOG.md
