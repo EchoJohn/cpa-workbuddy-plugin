@@ -67,7 +67,7 @@ const (
 )
 
 var (
-	version      = "0.1.0"
+	version      = "0.1.1"
 	hostAPI      *C.cliproxy_host_api
 	hostAPIMu    sync.RWMutex
 	activeConfig atomic.Value
@@ -325,12 +325,6 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		return okEnvelope(managementRegistration())
 
 	case pluginabi.MethodManagementHandle:
-		var mgmtReq pluginapi.ManagementRequest
-		if err := json.Unmarshal(request, &mgmtReq); err == nil {
-			if isPanelPath(mgmtReq.Path) {
-				return handlePanelPage(), nil
-			}
-		}
 		return handleManagement(request)
 
 	case pluginabi.MethodSchedulerPick:

@@ -3,7 +3,6 @@ package main
 import (
 	_ "embed"
 	"net/http"
-	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
@@ -11,6 +10,7 @@ import (
 //go:embed panel.html
 var panelHTML []byte
 
+// handlePanelPage 返回内嵌的管理面板页面（已包装为标准 envelope）。
 func handlePanelPage() []byte {
 	resp := pluginapi.ManagementResponse{
 		StatusCode: http.StatusOK,
@@ -20,16 +20,6 @@ func handlePanelPage() []byte {
 		},
 		Body: panelHTML,
 	}
-	data, _ := jsonMarshal(resp)
+	data, _ := okEnvelope(resp)
 	return data
-}
-
-// jsonMarshal 简单封装
-func jsonMarshal(v any) ([]byte, error) {
-	return okEnvelope(v)
-}
-
-func isPanelPath(path string) bool {
-	p := strings.TrimRight(path, "/")
-	return p == "" || p == "/panel" || p == "/status" || p == "/v0/resource/plugins/"+zcodeProviderID+"/panel"
 }
