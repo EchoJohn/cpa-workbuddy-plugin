@@ -214,6 +214,7 @@ func hostHTTPDoDirect(req *http.Request, bodyBytes []byte) (*hostHTTPResponse, e
 //     it once then reports done. Close is a no-op.
 type hostHTTPStream struct {
 	streamID string
+	liveBody io.ReadCloser
 	direct   []byte
 	directAt int
 }
@@ -266,9 +267,12 @@ func hostHTTPDoStream(req *http.Request) (*hostHTTPStream, int, http.Header, err
 	return &hostHTTPStream{streamID: resp.StreamID}, resp.StatusCode, http.Header(resp.Headers), nil
 }
 
-// hostHTTPDoStreamDirect is the test-only fallback: it performs the request
-// with the plugin's own http.Client and buffers the full body into an
-// in-memory hostHTTPStream so Read/Close keep the same contract.
+// hostHTTPDoStreamDirect performs the request with the plugin's own http.Client
+// and wraps resp.Body as a live stream so callers read chunks as they arrive
+// without blocking on io.ReadAll.
+// [参数] req: 上游 HTTP 请求；bodyBytes: 已读取的请求体字节。
+// [返回] hostHTTPStream: 实时流句柄；int: 状态码；http.Header: 响应头；error: 传输错误。
+// 最近修改时间：2026-10-11 22:35:00 改为 liveBody 实时流，消除 io.ReadAll 全量预缓冲阻塞
 func hostHTTPDoStreamDirect(req *http.Request, bodyBytes []byte) (*hostHTTPStream, int, http.Header, error) {
 	newReq, err := http.NewRequestWithContext(req.Context(), req.Method, req.URL.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -279,12 +283,7 @@ func hostHTTPDoStreamDirect(req *http.Request, bodyBytes []byte) (*hostHTTPStrea
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, resp.StatusCode, resp.Header.Clone(), err
-	}
-	return &hostHTTPStream{direct: raw}, resp.StatusCode, resp.Header.Clone(), nil
+	return &hostHTTPStream{liveBody: resp.Body}, resp.StatusCode, resp.Header.Clone(), nil
 }
 
 // Read pulls the next chunk. Returns (payload, done, err). done=true means the
@@ -292,6 +291,21 @@ func hostHTTPDoStreamDirect(req *http.Request, bodyBytes []byte) (*hostHTTPStrea
 func (s *hostHTTPStream) Read() ([]byte, bool, error) {
 	if s == nil {
 		return nil, true, fmt.Errorf("stream closed")
+	}
+	// Live direct mode: drain the open upstream response body as bytes arrive.
+	if s.liveBody != nil {
+		buf := make([]byte, 32*1024)
+		n, err := s.liveBody.Read(buf)
+		if n > 0 {
+			return buf[:n], false, nil
+		}
+		if err == io.EOF {
+			return nil, true, nil
+		}
+		if err != nil {
+			return nil, true, err
+		}
+		return nil, false, nil
 	}
 	// Direct (test fallback) mode: serve the buffered body in one shot.
 	if s.direct != nil {
@@ -326,6 +340,11 @@ func (s *hostHTTPStream) Read() ([]byte, bool, error) {
 // Close aborts the upstream stream. Always safe to call (idempotent on host).
 func (s *hostHTTPStream) Close() {
 	if s == nil {
+		return
+	}
+	if s.liveBody != nil {
+		_ = s.liveBody.Close()
+		s.liveBody = nil
 		return
 	}
 	if s.direct != nil {

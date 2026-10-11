@@ -61,3 +61,37 @@
 - **环境依赖登记**：无新增环境依赖。
 - **字典刷新**：本项目 skills/ 无 data.js / 字典.md，不适用。
 - **验证**：SKILL.md 全文回读无乱码；`prune-release-assets.py` py_compile OK + dry-run 幂等（0 待删）。
+
+## 2026-10-11 更新：吸收「生产容器重启红线」（非必要不重启）
+
+- **更新原因**：用户要求「非必要不要重启生产的 cpa 容器，插件的更新安装一般不需要重启。这个规则吸收到项目规则和 skill 中」。
+- **来源**：生产运维实践——`plugin-store install` 默认返回 `restart_required:false`，热重载即生效；`docker restart cli-proxy-api` 会中断在线流量并触发 60–80 秒冷启动（9 插件 + 模型刷新）。
+- **主要变更（SKILL.md）**：Step 13 校验项改为用 `docker logs cli-proxy-api | grep "hot reloaded"` 判定 `active_version`（明确不需要重启容器）；Step 13 新增「非必要不重启生产 cpa 容器（强制，2026-10-11）」条；权责边界末条由「发布完成后提醒用户重启宿主」改为「不主动重启生产 cpa 容器」。
+- **同步落点**：仓库级规则 AGENTS.md / CLAUDE.md「项目特有规则 → 仓库与发布」新增「生产容器重启红线（非必要不重启，强制）」；`project-cpa-workbuddy-plugin-host-config-safety-rules` 配置写入红线新增第 7 条（配置损坏恢复为重启的必要例外）。
+- **整理去重**：与踩坑 48（偶发不热重载时「不必重启、把时机交用户」）口径一致，新红线是其上位化表达，未逐字重复。
+- **字典刷新**：本项目 skills/ 无 data.js / 字典.md，不适用。
+- **验证**：SKILL.md 全文回读无乱码，UTF-8 无漂移。
+
+## 2026-10-11 更新：吸收「更新插件不需要手工改数据库表」强制红线
+
+- **更新原因**：用户点名「写进发布 skill」——把 2026-10-11 两次生产事故（外部会话直读直写 `config_store` 导致配置转义损坏）得出的规范固化到发布链路，避免发布过程中再出现同类操作。
+- **来源**：2026-10-11 两次生产 CPA 故障实操（`doc/4-bugs/2026-10-11_172000_...md`、`doc/4-bugs/2026-10-11_1812_...md`）。实证：18:04:53 `plugin-store/zcode-provider/install?version=0.1.3` → 200；安装前后两次配置快照反转义后 diff，唯一实质差异 = `zcode-provider` 的 `version: 0.1.2 → 0.1.3` 与 7 个 artifacts，**全部由 CPA 自动写入，零人工介入**。反例：`mysql -sN -e 'select content from cli_proxy_api.config_store where id="config"'` 后经 JSON 二次序列化写回 → 真实换行退化为字面 `\n`（0x5c 0x6e）→ 整篇塌缩单行 → YAML 判空 → `remote-management.secret-key` / `port` 全丢 → `/v0` `/v8` 管理路由全 404、端口漂移、外网 502。
+- **主要变更（SKILL.md）**：
+  - Step 13 新增子章节「⛔ 更新插件不需要手工改数据库表（强制红线）」：唯一正确路径 = `plugin-store install`；CPA 自动写 `plugins.configs.<id>`；⛔ 禁止 `select content` 后写回；只读可、读完绝不写回；非插件配置走 `PUT /v8/management/config`；损坏铁证（反斜杠再转义一层 `\"`→`\\"`、`char(10)` 真实换行数=1）；配置存储契约速查（`md5(content)` 恒等 spool `md5sum`）；恢复流程指向 `project-cpa-workbuddy-plugin-host-config-safety-rules`。
+  - 权责边界新增「不直接读写生产 `config_store` 表」条。
+  - 踩坑清单追加 54：直读直写 `config_store` 是生产事故，含 5 条铁律。
+- **同步落点**：项目 skill `project-cpa-workbuddy-plugin-host-config-safety-rules`（配置存储契约 + 「更新插件的正确姿势」章节 + 写入红线）、用户级 `config-persistence-safety-rules`、知识库 `cli-proxy-api 宿主配置存储形态` 笔记与 MOC、`PROJECT_MEMORY.md`、`.workbuddy-ai/memory/2026-10-11.md`。
+- **整理去重**：新子章节与 Step 13 既有「非必要不重启」条互补（一条管重启、一条管配置写入），与踩坑 25（唯一部署路径）同域但不重复（25 讲「为什么不走 docker cp / PUT config」，本条讲「为什么不动数据库表」）。同域冗余扫描范围 = release-rules + host-config-safety-rules，发现 0 处逐字重复、0 处门控层叠（本 skill 讲「发布时不要做什么」，host-config-safety 讲「坏了怎么修」）。PASS。
+- **环境依赖登记**：无新增环境依赖（服务器地址 / SSH key / 库表名为项目事实，已由既有章节承载）。
+- **凭据纪律**：未回显任何密码 / key 原值；示例命令只用占位符。
+- **字典刷新**：本项目 skills/ 无 data.js / 字典.md，不适用。
+- **验证**：SKILL.md 全文回读无乱码；UTF-8 无漂移。
+
+## 2026-10-11 更新：吸收「取消冗余 push CI 提速 + 轮询 urlopen 超时 + Windows SSH 二进制流防 CRLF」
+
+- **更新原因**：2026-10-11 连续发布 `qoderwork-provider 0.9.29`、`qoder-ai-provider 0.1.8`、`traework-provider 0.2.6/0.2.8` 实战总结。
+- **主要变更（SKILL.md）**：
+  - 踩坑清单追加 55：取消 `event=push` 冗余 CI 运行释放并发 Runner（发布从 30m 缩至 7.5m）+ `urllib.request.urlopen(r, timeout=20)` 防半开连接挂死；
+  - 踩坑清单追加 56：Windows `subprocess.Popen(["ssh", "cpa-server", "bash"])` 必须传 `bytes`（禁 `text=True` 防 `\r\n` 注入）并首行声明完整 `PATH`。
+- **验证**：SKILL.md 全文回读无乱码；UTF-8 无漂移。
+

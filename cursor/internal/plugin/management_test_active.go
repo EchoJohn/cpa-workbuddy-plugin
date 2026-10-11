@@ -105,10 +105,13 @@ func (handler *Handler) handleTestActive(ctx context.Context, body []byte) (mana
 	return handler.handleTestActiveWithAuth(ctx, credential, authIndex, req.Model)
 }
 
+// errCursorTestActiveFirstChunkDone 标记探活流已收到首个有效输出帧，用于立即终止后续流读取。
+var errCursorTestActiveFirstChunkDone = errors.New("cursor: test active first chunk received")
+
 // handleTestActiveWithAuth 使用指定凭据对 Cursor 上游执行真实轻量推理探活。
 // [参数] ctx: 上下文；credential: Cursor 认证凭据；authIndex: 账号索引；model: 指定模型名称（可为空）。
 // [返回] 管理接口响应体，包含测试往返结果与耗时。
-// 最近修改时间 2026-10-11（实现测试推理、别名归一化与 401 自动令牌刷新重试闭环）
+// 最近修改时间 2026-10-11 22:30:00（实现流式首包即停，收到首个正文/思考/完成帧立即返回，消除思考模型整段思维链等待）
 func (handler *Handler) handleTestActiveWithAuth(ctx context.Context, credential cursorauth.Credentials, authIndex, model string) (managementResponse, error) {
 	if handler.cursor == nil {
 		return managementJSON(http.StatusOK, map[string]any{
@@ -134,34 +137,48 @@ func (handler *Handler) handleTestActiveWithAuth(ctx context.Context, credential
 		Mode:        cursorproto.FullReplay,
 	}
 
+	// 1. 构造首包即停回调：收到首个非空正文、思考片段或完成帧立即返回哨兵终止流读取
 	var responseText strings.Builder
-	_, err := handler.cursor.Run(testCtx, input, func(event cursorproto.ServerEvent) error {
-		if event.Kind == cursorproto.EventText {
-			responseText.WriteString(event.Text)
+	firstChunkSeen := false
+	emitFirstChunk := func(event cursorproto.ServerEvent) error {
+		switch event.Kind {
+		case cursorproto.EventText, cursorproto.EventThinking:
+			if strings.TrimSpace(event.Text) != "" {
+				responseText.WriteString(event.Text)
+				firstChunkSeen = true
+				return errCursorTestActiveFirstChunkDone
+			}
+		case cursorproto.EventToolCall, cursorproto.EventDone:
+			firstChunkSeen = true
+			return errCursorTestActiveFirstChunkDone
 		}
 		return nil
-	})
+	}
+
+	_, err := handler.cursor.Run(testCtx, input, emitFirstChunk)
+	if firstChunkSeen || errors.Is(err, errCursorTestActiveFirstChunkDone) {
+		err = nil
+	}
 
 	elapsed := time.Since(start).Round(time.Millisecond)
 
-	// 1. 若遇到未授权错误且存在 RefreshToken，尝试自动刷新一次并重试
+	// 2. 若遇到未授权错误且存在 RefreshToken，尝试自动刷新一次并重试
 	if err != nil && (strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "unauthorized")) && credential.RefreshToken != "" && handler.auth != nil {
 		if refreshed, refreshErr := handler.auth.Refresh(ctx, credential); refreshErr == nil {
 			credential = refreshed
 			_ = handler.saveRefreshedCredential(ctx, authIndex, refreshed)
 			input.AccessToken = refreshed.AccessToken
+			firstChunkSeen = false
 			startRetry := time.Now()
-			_, err = handler.cursor.Run(testCtx, input, func(event cursorproto.ServerEvent) error {
-				if event.Kind == cursorproto.EventText {
-					responseText.WriteString(event.Text)
-				}
-				return nil
-			})
+			_, err = handler.cursor.Run(testCtx, input, emitFirstChunk)
+			if firstChunkSeen || errors.Is(err, errCursorTestActiveFirstChunkDone) {
+				err = nil
+			}
 			elapsed = time.Since(startRetry).Round(time.Millisecond)
 		}
 	}
 
-	// 2. 检查最终执行结果
+	// 3. 检查最终执行结果
 	if err != nil {
 		return managementJSON(http.StatusOK, map[string]any{
 			"ok":    false,

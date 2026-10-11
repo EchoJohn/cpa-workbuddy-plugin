@@ -83,14 +83,21 @@ func handleTestActive(body []byte) ([]byte, error) {
 	return json.Marshal(res)
 }
 
-// handleTestActiveWithAuth 向上游发起单次 Anthropic 短消息真实探活。
+// handleTestActiveWithAuth 向上游发起单次 Anthropic 流式首包即停真实探活。
+// [参数] sa: ZCode 账号凭据；model: 待测试模型名称。
+// [返回] testActiveResponse: 探活状态、耗时与结果消息。
+// 最近修改时间：2026-10-11 22:35:00 改为 stream=true + max_tokens=1 首包即停，消除 GLM-5.3 思考模型整段思维链等待
 func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
-	if sa == nil || sa.APIKey == "" {
+	if sa == nil || (sa.APIKey == "" && sa.Token == "") {
 		return testActiveResponse{
 			OK:     false,
 			Status: "failed",
 			Error:  "invalid account or empty API key",
 		}
+	}
+	apiKey := sa.APIKey
+	if apiKey == "" {
+		apiKey = sa.Token
 	}
 
 	cfg := currentConfig()
@@ -104,9 +111,11 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 	}
 	upstreamModel := mappedModel(model, cfg)
 
+	// 1. 构造流式最小探活负载（stream=true, max_tokens=1）
 	pingPayload := map[string]any{
 		"model":      upstreamModel,
-		"max_tokens": 10,
+		"max_tokens": 1,
+		"stream":     true,
 		"messages": []map[string]string{
 			{"role": "user", "content": "ping"},
 		},
@@ -115,10 +124,10 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 
 	reqURL := cfg.BaseURL + "/v1/messages"
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bytes.NewReader(payloadBytes))
 	if err != nil {
+		cancel()
 		return testActiveResponse{
 			OK:     false,
 			Status: "failed",
@@ -127,14 +136,15 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 		}
 	}
 
-	fp := mimic.New(cfg.Mimic, keyID(sa.APIKey))
-	fp.ApplyRequest(httpReq.Header, sa.APIKey, mimic.UUID4())
+	fp := mimic.New(cfg.Mimic, keyID(apiKey))
+	fp.ApplyRequest(httpReq.Header, apiKey, mimic.UUID4())
 
+	// 2. 发起请求并在收到首个数据块后立即异步关闭流，避免等待整段思考链完成
 	start := time.Now()
 	resp, err := modelHTTPClient.Do(httpReq)
-	latency := time.Since(start).Milliseconds()
-
 	if err != nil {
+		cancel()
+		latency := time.Since(start).Milliseconds()
 		sa.TestFailed = true
 		saveAuthTestStatus(sa)
 		noteAccountFailure(sa.AuthID, 0, err.Error())
@@ -146,11 +156,16 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 			Error:     err.Error(),
 		}
 	}
-	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	defer func() {
+		go func() {
+			_ = resp.Body.Close()
+			cancel()
+		}()
+	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		latency := time.Since(start).Milliseconds()
 		sa.TestFailed = true
 		saveAuthTestStatus(sa)
 		noteAccountFailure(sa.AuthID, resp.StatusCode, string(bodyBytes))
@@ -163,7 +178,25 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 		}
 	}
 
-	// 探活成功：清标 test_failed，重置 failover
+	// 3. 读取首个分片（512 字节）即视为流已建立，拦截流内显式错误帧
+	buf := make([]byte, 512)
+	n, _ := resp.Body.Read(buf)
+	latency := time.Since(start).Milliseconds()
+	firstChunk := string(buf[:n])
+	if strings.Contains(firstChunk, `"type":"error"`) || strings.Contains(firstChunk, `"type": "error"`) {
+		sa.TestFailed = true
+		saveAuthTestStatus(sa)
+		noteAccountFailure(sa.AuthID, http.StatusForbidden, firstChunk)
+		return testActiveResponse{
+			OK:        false,
+			Status:    "failed",
+			Model:     model,
+			LatencyMS: latency,
+			Error:     fmt.Sprintf("upstream stream error: %s", firstChunk),
+		}
+	}
+
+	// 4. 探活成功：清标 test_failed，重置 failover
 	sa.TestFailed = false
 	saveAuthTestStatus(sa)
 	resetAccountFailover(sa.AuthID)

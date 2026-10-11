@@ -217,10 +217,23 @@ curl -s -X POST -H "Authorization: Bearer $MANAGEMENT_KEY" \
   - 只有 plugin-store install 会下载 assets → 落盘 → 热重载（面板日志可见加载时间戳）
 - **install 后必须校验落盘二进制内容，不可信任响应里的 version/path**：registry 外层 version 已 bump、artifacts 尚未 publish 的 CDN 中间态，会把旧二进制按新版本文件名落盘（0.1.13 实锤：`traework-provider-v0.1.13.so` 的 sha256 与 0.1.12 完全一致，重启后 registered 仍为 0.1.12）。至少执行以下一项，推荐两项都做：
   - `sha256sum <生产落盘.so>` 与本地 release zip 内 `.so` 的 sha256 比对，必须一致；
-  - 重启宿主后核对日志 `plugin loaded` 与 `plugin registered` 的版本均等于目标版本。
-  - 不一致时：等待 raw CDN 完全传播后重新 `plugin-store install?version=<目标版本>`，再次校验哈希，一致后重启宿主加载。
+  - 用 `docker logs cli-proxy-api --since 20m | grep "hot reloaded"` 核对 `active_version=<目标版本> retired_version=<旧版>`（**不需要重启容器**；`/v0/management/plugins` 列表项无 `version` 字段，不能作判定依据，见踩坑 33）。
+  - 不一致时：等待 raw CDN 完全传播后重新 `plugin-store install?version=<目标版本>`，再次校验哈希，哈希一致后重新 install 触发加载；**不要用重启容器来"催"加载**（见下条重启红线）。
 - 部署后验证：`GET /v0/management/plugins/<p>/accounts`（或面板资源 URL）返回 200 + 预期数据；面板页 `GET /v0/resource/plugins/<p>/panel` 200
 - 最终态核对：生产各插件版本应与 registry.json 完全一致
+- **非必要不重启生产 cpa 容器（强制，2026-10-11）**：`plugin-store install` 默认返回 `restart_required:false`，**插件的新增 / 更新 / 安装一般不需要重启容器**——热重载即为生效路径。重启 `cli-proxy-api` 会中断在线流量并触发 60–80 秒冷启动（9 插件 + 模型刷新），属高成本、高影响操作，**非必要不做**：只有 install 后 `docker logs | grep "hot reloaded"` 确认该插件未热重载（如踩坑 48 的偶发形态），或生产配置损坏恢复等必要场景，且已取得用户明确确认时才执行；否则保持容器运行，把重启时机交用户决定。**不得把"重启宿主"写进发布收尾的默认动作。**
+
+#### ⛔ 更新插件不需要手工改数据库表（强制红线，2026-10-11 两次生产事故后固化）
+
+> **结论：安装 / 更新生产插件只需要上面那一条 `plugin-store install` 管理 API 命令。`config_store` 表由 CPA 自动维护，任何人、任何步骤都不需要直接读写它。**
+
+- **正确且唯一的路径**：`POST /v0/management/plugin-store/<plugin-id>/install?version=<x.y.z>` → CPA 自动把该插件的 `version` + 7 平台 `artifacts` 写入 `config_store.content` 的 `plugins.configs.<plugin-id>`，随后热重载生效。**全过程零人工介入。**
+- **实证（2026-10-11 18:04:53）**：`plugin-store/zcode-provider/install?version=0.1.3` → HTTP 200；安装前后两次配置快照反转义后 diff，**唯一实质差异**就是 `zcode-provider` 的 `version: 0.1.2 → 0.1.3` 与 7 个 artifacts 的更新 —— 全部由 CPA 自己写入。
+- **⛔ 禁止事项**：为了「确认插件配置」或「手工改插件配置」而 `select content from cli_proxy_api.config_store` 再把内容写回。**这正是 2026-10-11 两次生产事故的成因**：读出的 content 经 JSON 二次序列化写回 → 真实换行退化为字面 `\n`（0x5c 0x6e）→ 整篇塌缩单行 → YAML 首字符 `#` 判为注释 → 解析为空配置 → `remote-management.secret-key` 与 `port` 全丢 → 管理路由 `/v0` `/v8` 全 404、端口回退随机、外网 502。
+- **只读确认可以，读完绝不写回**：确需核对配置，只做 `select` 并**只读**（禁止任何 `UPDATE` / `INSERT` / 写回脚本）；如需修改非插件类配置，走正规管理接口 `PUT /v8/management/config`，不要碰数据库表。
+- **识别「二次序列化」损坏的铁证**：不仅换行变成字面 `\n`，**原有的反斜杠也会被再转义一层**（`\"` → `\\"`）。发布收尾自检：`select length(content), (length(content)-length(replace(content, char(10), ''))) as real_lf from cli_proxy_api.config_store where id='config';` —— 正常多行 YAML 的 `real_lf` 应为数十量级，**若等于 1 即已损坏**。
+- **配置存储契约（速查）**：MySQL 容器 `mysql` → 库 `cli_proxy_api` → 表 `config_store` → 单条 `id='config'` 的 `content`；CPA 启动时**逐字节原样**写入 spool `/CLIProxyAPI/mysqlstore/mysqlstore/config/config.yaml` 再直接 YAML 解析（**不做任何 `\n` 解码**）。因此 `md5(content)` 必须恒等于 spool 文件 `md5sum`。
+- **故障处置与恢复流程**：见项目 skill `project-cpa-workbuddy-plugin-host-config-safety-rules`（含形态 A 端口漂移 / 形态 B 仅管理面 404 的判别、hex 写回 + 热重载修复法、回滚点清单）。发布链路只负责「不制造该故障」，不承担恢复职责。
 
 ```bash
 rm -rf /tmp/cpa-0xxx cpa-shim-* 2>/dev/null
@@ -358,6 +371,10 @@ git -c http.proxy=socks5h://127.0.0.1:1080 push origin main
 51. **panel.html 改动仅凭 node --check 全绿就发布 = 生产事故（2026-09-08 实测，0.1.55→0.1.56 hotfix）**：`node --check` 只查语法，抓不到未定义标识符——0.1.55 清理把 `const scopeLabel=` 前缀删成孤立表达式，语法合法全绿发布，生产运行时 `ReferenceError` 使面板整体失败。HTML 内嵌 JS 改动后的发布前最低验证线：① vm + DOM stub 真实执行全部 `<script>` 顶层（抓 ReferenceError）；② 删除"带名字的定义"时 grep 复查定义处与使用处成对存在；③ 关键表达式（如三元链）逐分支运行时断言。三者缺一不可，Go build/test 全绿对内嵌 JS 零覆盖。
 52. **管道吞退出码 → 残缺 assets 被提交（2026-09-12 实测，0.14.29）**：`python scripts/download-release-assets.py ... | tail` 会吞掉脚本的异常退出码——下载 7 个 zip 只成功 1 个（脚本中途 URLError 10060），`&&` 链继续执行，**残缺 assets 直接 commit + push**。铁律：assets 下载后、`git add` 前**必须** `cd release-assets/<dir> && sha256sum -c checksums.txt` 且 7/7 全 OK；校验不过补下载，绝不能靠命令退出码串联代替产物校验。
 53. **assets 下行也走 SOCKS 隧道 + 隧道启动方式（2026-09-12 实测，0.14.29/0.14.30 两次复现）**：踩坑 37 只写了上行，实测 `download-release-assets.py` 直连下行同样稳定超时（urllib WinError 10060）——release assets 下载直接走 `curl -sL --socks5-hostname 127.0.0.1:1080`（先下 checksums.txt，再逐个 zip，最后 sha256sum -c）。隧道启动：Git Bash 里 `(ssh -f -N -D ... &)` 子壳后台化不可靠（静默失败），**用 run_in_background 跑 `ssh -N -D 127.0.0.1:1080`，然后 `netstat -an | grep ":1080.*LISTEN"` 确认监听再开下载**；隧道进程保留可跨版本复用（0.14.29 与 0.14.30 共用）。
+54. **更新插件不需要手工改数据库表——直读直写 `config_store` 是生产事故（2026-10-11 两次事故，铁律）**：`plugin-store install` 一条命令即可，CPA 自动把 version + 7 平台 artifacts 写入 `config_store.content` 的 `plugins.configs.<id>` 并热重载，**零人工介入**（18:04:53 实证：install 0.1.3 前后两次配置快照 diff，唯一实质差异就是该插件的 version 与 artifacts）。反例：外部会话 `select content from cli_proxy_api.config_store` 后经二次序列化写回 → 真实换行退化为字面 `\n`、整篇塌缩单行 → YAML 判空 → `remote-management.secret-key`/`port` 全丢 → `/v0` `/v8` 管理路由全 404、端口漂移、外网 502。**铁律**：① 改插件配置只走 `plugin-store install`；② 非插件配置走 `PUT /v8/management/config`；③ 数据库表**只读不写**（`select` 可以，读完绝不写回）；④ 损坏铁证 = 反斜杠被再转义一层（`\"`→`\\"`）+ `char(10)` 真实换行数为 1；⑤ 恢复流程见 `project-cpa-workbuddy-plugin-host-config-safety-rules`。
+
+55. **GitHub Actions `push` 与 `workflow_dispatch` 竞争 Runner 导致排队 20~30 分钟 + 轮询 `urlopen` 无超时挂死（2026-10-11 实测）**：`.github/workflows/build.yml` 同时监听 `push` 与 `workflow_dispatch`，每次提交推送代码、Release 资产或 `registry.json` 都会自动触发包含 72 个作业的 `push` 构建（仅产出 artifacts 不发 Release，却占满免费并发 Runner，导致 `workflow_dispatch` 排队 15~25 分钟）。**处置铁律**：① 触发 `workflow_dispatch` 前后及推送资产/注册表后，查询 `actions/workflows/build.yml/runs?event=push&per_page=10`，对 `status in (queued, in_progress, waiting)` 的冗余 `push` run 调用 `POST /actions/runs/<id>/cancel`（**严禁取消他人的 `workflow_dispatch` run**），实测可将单插件发布总耗时从 30 分钟缩短至 7.5 分钟；② 轮询脚本中所有 `urllib.request.urlopen(r, timeout=20)` 必须显式指定超时，防止 Windows 下半开 TCP 连接导致后台轮询进程无报错永久挂起。
+56. **Windows 下通过 `subprocess.Popen(["ssh", ...], text=True)` 向远程 Linux `bash` 喂脚本会注入 `\r` 导致报错（2026-10-11 实测）**：Python 在 Windows 下开启 `text=True` 时，stdin 管道会自动将 `\n` 翻译为 `\r\n`，导致远程 `bash` 报 `$'\r': command not found` 或文件路径末尾粘连 `\r`（如 `/CLIProxyAPI/config.yaml\r: No such file or directory`）；同时非交互式 SSH 默认不加载 `/usr/local/bin` 等 PATH（报 `docker: command not found`）。**铁律**：向远程 `ssh cpa-server bash` 传递脚本一律使用**二进制字节流**（`input=script.encode("utf-8")`，不设 `text=True`），且脚本首行显式声明 `export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`。
 
 ## 权责边界与不负责事项
 
@@ -365,7 +382,8 @@ git -c http.proxy=socks5h://127.0.0.1:1080 push origin main
 - 不负责代码正确性验证本身（那是 cgo-plugin-isolated-test + 各开发规则）
 - 不负责替代用户决策（版本号语义、是否发布）
 - 不把并行/无关改动混入发布（用户明确要求另发时除外，须显式列出文件）
-- 发布完成后提醒用户重启宿主（c-shared 插件需 CLIProxyAPI 重启才生效；plugin-store install 多数场景热重载已生效，见 Step 13/踩坑 33）
+- **不主动重启生产 cpa 容器**：plugin-store install 多数场景热重载即生效（见 Step 13 / 踩坑 33 / 踩坑 48），**插件的新增 / 更新 / 安装一般不需要重启容器**；发布完成后默认保持容器运行，只在热重载经证据确认未生效或配置损坏恢复等必要场景、且用户明确确认时才提示 / 执行重启，绝不把重启当默认收尾动作。
+- **不直接读写生产 `config_store` 表**：插件配置由 `plugin-store install` 自动写入并热重载（见 Step 13「更新插件不需要手工改数据库表」/ 踩坑 54）；非插件配置走 `PUT /v8/management/config`。数据库表**只读不写**——为「确认 / 修改配置」而 `select` 后写回是 2026-10-11 两次生产事故的成因，属绝对红线。
 
 ## 执行通过 / 驳回标准
 

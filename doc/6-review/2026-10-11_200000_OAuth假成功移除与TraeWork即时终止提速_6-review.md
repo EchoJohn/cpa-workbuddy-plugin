@@ -27,5 +27,9 @@
 7. `traework/models.go`：`handleModelsQuery` 打开测试弹窗时后台预热 TLS 连接，并过滤内部非对话子代理占位项。
 8. `traework/active_ping_test.go`：新增首包即停与 HTTP 200 `event: error` 拦截回归测试。
 9. `qoderwork/VERSION` (0.9.29), `qoderwork/main.go`, `qoderwork/CHANGELOG.md`。
-10. `qoder-ai/VERSION` (0.1.8), `qoder-ai/main.go`, `qoder-ai/CHANGELOG.md`。
+10. `qoder-ai/VERSION` (0.1.8), `qoder-ai/main.go`, `qoder-ai/CHANGELOG.md`, `qoder-ai/host_bridge.go`。
 11. `traework/VERSION` (0.2.8), `traework/main.go`, `traework/CHANGELOG.md`。
+12. `cursor/internal/plugin/management_test_active.go`, `cursor/VERSION` (0.1.5), `cursor/main.go`, `cursor/CHANGELOG.md`。
+13. `zcode/active_ping.go`, `zcode/active_ping_test.go`, `zcode/CHANGELOG.md` (0.1.5)。
+14. `workbuddy/host_bridge.go`, `workbuddy-ai/host_bridge.go`, `qoderwork/host_bridge.go`（`liveBody` 实时流升级）。
+15. `skills/project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules/SKILL.md` 及 `AGENTS.md` / `CLAUDE.md`。

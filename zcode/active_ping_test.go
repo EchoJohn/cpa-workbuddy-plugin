@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestActivePing_ModelsQuery(t *testing.T) {
@@ -88,3 +89,48 @@ func TestActivePing_MockServer(t *testing.T) {
 		t.Fatalf("expected test_failed to be true, got %+v", accAfter)
 	}
 }
+
+// TestActivePing_FirstChunkEarlyExit 验证探活收到首个流式数据块后立即返回，不等待后续长时间阻塞。
+func TestActivePing_FirstChunkEarlyExit(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "zcode_ping_early_*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+	setAccountsDir(tempDir)
+
+	unblock := make(chan struct{})
+	defer close(unblock)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Let\"}}\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-unblock:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+
+	cfg := currentConfig()
+	cfg.BaseURL = server.URL
+	activeConfig.Store(cfg)
+
+	sa := &StoredAuth{AuthID: "zcode-stream", APIKey: "valid.key"}
+	_ = writeAuthFileDirect(filepath.Join(tempDir, "zcode-stream.json"), sa)
+
+	start := time.Now()
+	res := handleTestActiveWithAuth(sa, "GLM-5.3")
+	elapsed := time.Since(start)
+	if !res.OK || res.Status != "active" {
+		t.Fatalf("expected active status, got %+v", res)
+	}
+	if elapsed > 1*time.Second {
+		t.Fatalf("expected early exit (< 1s), took %v", elapsed)
+	}
+}
+

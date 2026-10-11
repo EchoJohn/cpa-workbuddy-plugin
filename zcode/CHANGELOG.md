@@ -9,7 +9,8 @@
   - 凭据存储升级：`StoredAuth` 扩展 `token`、`access_token`、`user_id`、`username`、`email`、`avatar_url`、`expires_at`，保持与已有 APIKey 的完全向下兼容；
   - 桥接页面升级：`/oauth-bridge` 改为 Z.ai 官方登录授权引导与回调地址（含 code 与 state）解析提交；
   - 宿主回调自动捕获：`handlePollLogin` 支持自动读取宿主 `.oauth-zcode-provider-<state>.oauth` 载荷文件并兑换落盘；
-  - 管理面板升级：`panel.html` 增加「OAuth 授权登录」按钮，支持账号用户名/邮箱/用户ID展示与凭据导入。
+  - 管理面板升级：`panel.html` 增加「OAuth 授权登录」按钮，支持账号用户名/邮箱/用户ID展示与凭据导入；
+  - 测试探活首包即停优化：`active_ping.go` 的 `handleTestActiveWithAuth` 改为流式请求（`stream=true, max_tokens=1`），读取首个 512 字节数据块并校验无错误后即刻返回并异步关闭底层流，消除 `GLM-5.3` 等思考模型的完整生成等待。
 
 ## [0.1.4] - 2026-10-11
 

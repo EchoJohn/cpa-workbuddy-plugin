@@ -1,5 +1,14 @@
 # Cursor Provider Plugin Changelog
 
+## 0.1.5
+
+### Perf - 测试探活（/test-active）改为流式首包即停，消除思考模型整段思维链等待
+
+- 变更要点:
+  1. 根因：`handleTestActiveWithAuth` 在调用 `handler.cursor.Run` 时，回调一直返回 `nil` 等待整条 Connect-RPC 响应流完全结束；测试 `claude-3-7-sonnet-thinking`、`deepseek-r1`、`gemini-2.5-pro` 等思考模型时需等待完整思维链与正文生成完毕。
+  2. 优化：引入 `errCursorTestActiveFirstChunkDone` 首包即停机制，一旦收到首个非空 `EventText`、`EventThinking`、`EventToolCall` 或 `EventDone` 立即终止流读取并返回成功，实现 TTFT 级快速探活响应。
+- 涉及文件: cursor/internal/plugin/management_test_active.go、cursor/VERSION、cursor/main.go、cursor/CHANGELOG.md
+
 ## 0.1.4
 
 ### Fix - 修复测试弹窗模型 Query 参数解析、DiscoverModels 真实模型展现与点号模型别名归一化（彻底修复上游 not_found）
