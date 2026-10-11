@@ -168,6 +168,49 @@ func parseModelsConfig(v any) {
 	}
 }
 
+// filterExcludedModels 剔除宿主 oauth-excluded-models 中为 traework-provider 列出的模型。
+// 宿主不会替插件过滤，只有插件在模型出口自行过滤才能让该配置生效；同名裸模型被多个
+// OAuth 插件同时认领时，这是唯一能把模型从某个服务商摘掉的治理入口。
+// [参数] models: 已完成优先级解析的插件模型列表；host: 宿主随请求传入的配置摘要。
+// [返回] 过滤后的模型列表；宿主未配置排除项时原样返回入参。
+// 最近修改时间：2026-10-11 21:20:00；改动原因：补齐 traework 与 workbuddy/qoder-ai/qoderwork
+// 一致的 oauth-excluded-models 过滤，使 deepseek-v4.1-flash 这类多服务商同名模型可被定向摘除。
+func filterExcludedModels(models []pluginapi.ModelInfo, host pluginapi.HostConfigSummary) []pluginapi.ModelInfo {
+	if len(host.ExcludedModels) == 0 {
+		return models
+	}
+	// Try exact provider match, then case-insensitive scan.
+	excluded := host.ExcludedModels[providerName]
+	if len(excluded) == 0 {
+		for channel, list := range host.ExcludedModels {
+			if strings.EqualFold(strings.TrimSpace(channel), providerName) {
+				excluded = list
+				break
+			}
+		}
+	}
+	if len(excluded) == 0 {
+		return models
+	}
+	excludeSet := make(map[string]struct{}, len(excluded))
+	for _, m := range excluded {
+		excludeSet[strings.ToLower(strings.TrimSpace(m))] = struct{}{}
+	}
+	// Use a fresh slice — models[:0] would alias the input's backing array,
+	// which may be the dynamicTraeModelsCache's own slice. Mutating it in place
+	// would corrupt the cache for subsequent callers (P0 bug: after one
+	// filterExcludedModels call, cache returns the filtered list as the
+	// "full" list on the next fetch).
+	out := make([]pluginapi.ModelInfo, 0, len(models))
+	for _, m := range models {
+		if _, skip := excludeSet[strings.ToLower(m.ID)]; skip {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // handleModelStatic 返回宿主要求的全局模型列表。
 //
 // 优先级链与 handleModelForAuth 一致（动态 > 配置 > 静态默认）：静态默认已去除
@@ -176,11 +219,12 @@ func parseModelsConfig(v any) {
 //
 // [参数] raw: 宿主传入的 StaticModelRequest。
 // [返回] 成功 envelope；动态不可用时为配置或空列表。
-// 最近修改时间：2026-09-19；改动原因：剔除写死模型，静态路径未命中缓存时主动拉取。
+// 最近修改时间：2026-10-11 21:20:00；改动原因：模型列表出口应用宿主 oauth-excluded-models 过滤。
 func handleModelStatic(raw []byte) ([]byte, error) {
 	var req pluginapi.StaticModelRequest
 	_ = json.Unmarshal(raw, &req)
 	models := resolveTraeModels(dynamicTraeModelsFromCacheOrAuth(), configuredModels, defaultTraeModels)
+	models = filterExcludedModels(models, req.Host)
 	return okEnvelope(pluginapi.ModelResponse{Provider: providerName, Models: models})
 }
 
@@ -239,7 +283,7 @@ func fetchDynamicTraeModelsFromAnyAuth() []pluginapi.ModelInfo {
 //
 // [参数] raw: 宿主传入的账号级模型请求，StorageJSON 包含账号凭据。
 // [返回] 成功 envelope；账号解析、上游请求或模型解析失败时按链回退。
-// 最近修改时间：2026-09-12；改动原因：动态成功改为写入缓存并统一走优先级链。
+// 最近修改时间：2026-10-11 21:20:00；改动原因：两个返回出口都应用宿主 oauth-excluded-models 过滤。
 func handleModelForAuth(raw []byte) ([]byte, error) {
 	// 1. 请求本身无法解析时也保持模型能力可用，继续走优先级链兜底
 	// （无凭据可用，因此动态这一级必然为空，直接落配置 / 静态）。
@@ -247,7 +291,7 @@ func handleModelForAuth(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return okEnvelope(pluginapi.ModelResponse{
 			Provider: providerName,
-			Models:   resolveTraeModels(nil, configuredModels, defaultTraeModels),
+			Models:   filterExcludedModels(resolveTraeModels(nil, configuredModels, defaultTraeModels), req.Host),
 		})
 	}
 
@@ -263,9 +307,10 @@ func handleModelForAuth(raw []byte) ([]byte, error) {
 	}
 
 	// 3. 动态不可用时保留 config_yaml 覆盖语义，否则使用内置静态列表。
+	// 宿主排除项在最终列表上生效，避免被摘掉的服务商同名模型重新出现在 /models。
 	return okEnvelope(pluginapi.ModelResponse{
 		Provider: providerName,
-		Models:   resolveTraeModels(dynamic, configuredModels, defaultTraeModels),
+		Models:   filterExcludedModels(resolveTraeModels(dynamic, configuredModels, defaultTraeModels), req.Host),
 	})
 }
 
