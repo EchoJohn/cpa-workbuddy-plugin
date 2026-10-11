@@ -37,8 +37,9 @@
   - 实施：解析器增第 4 类顶层 `code` 形态；`sseErrorFrame` 增顶层 `code`+`message` + 新增 `unwrapNestedMessage` 逐层展开（保留首层业务码）；`pumpUpstreamStream`/`collectUpstreamStreamQoder`/`aggregateQoderSSE` 三路径循环内即刻收尾；`sendActivePingQoder` 首帧内容校验。行为统一「立即报错」（`shouldRotateOnUpstreamErr` 对排队帧天然 false，不换号）。
   - 门禁：两插件 `cgo-shim-build.py` build/vet/test 全绿；新增 `stream_queue_frame_test.go`（`hangingReader` 模拟 Keep-Alive），**哨兵反证移除识别分支后该用例耗时 10.00s 精确复现挂死**；对抗验证（正文含 code 字样不误判）；6-review `STYLE: PASS`；`POLLUTION: PASS`；两插件四个关键函数逐字同构（md5 两两相同）。
   - 文档与沉淀：Bug 主文档 `doc/4-bugs/2026-10-12_001641_*`、测试主文档 `doc/5-tests/2026-10-11_164802_*`、6-review `doc/6-review/2026-10-11_164802_*`；skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules` 规则一新增契约；知识库 `HTTP200不等于流式协议成功-有效终止契约.md` 追加 2026-10-12 补充。
-  - 提交：`62c16a5`（代码+文档）、`d433e9f`（skill）、`f20dbcc`（记忆）已推送 main；CI dispatch run `38157167623`（qoder-ai）/`38157165743`（qoderwork）**Test job 全部 success**，cross-compile 矩阵因账号级 Actions 队列积压排队中。
-  - 待办：CI 完成后下载 8 assets → 更新 registry（0.1.9 / 0.9.30）→ 生产 `plugin-store install` 热重载 → 用 112KB prompt 端到端复测（预期由 60s 挂死转为快速报错）。
+  - 提交：`62c16a5`（代码+文档）、`d433e9f`（skill）、`f20dbcc`（记忆）、`c1af36e`（测试基线）、`ec145de`（assets）、`b9863ff`（registry）、`a31e8b2`（prune）已推送 main。
+  - **发布与生产验收（已完成）**：CI run `38157167623`/`38157165743` 均 success，tag 与 Release 各 8 资产；registry 同步 0.1.9/0.9.30、远端 14/14 平台 size+sha256 ALL PASS；生产 `plugin hot reloaded active_version=0.1.9 retired_version=0.1.8` / `0.9.30 retired=0.9.29`、**零容器重启**、落盘 `.so` sha256 与本地 zip 一致（`8fd3aa13…` / `9758ca2e…`）、accounts 200；修复后 112KB prompt 由 **60.57s 挂死 → 3.90s 正常返回**，`qwen-3.8-flash`/`qwen-3.8` 经渠道 key 直测均 200（1.9s）；探活侧已实证能如实报 `upstream 200: 112:` 失败（旧版盲判成功）；prune 清理 0.1.8/0.9.29（约 40.6 MB）。
+  - 局限：验收期间上游未排队，排队帧路径的「快速报错」未在生产自然复现，由本地哨兵反证（10.00s 精确复现）+ 真实帧复刻覆盖；待排队窗口回看日志确认。
 
 - 当前会话（2026-10-11）：**彻底废弃并删除 Gemini 插件（gemini-provider），全套配置与文档对齐 8 大插件体系**：
   - 用户反馈与决策：用户指出当前 Gemini 插件体积极大（动态库达 14.4MB，比含全套 UI 的 WorkBuddy 还要大 80%），且在实际使用中几乎不可用（强制要求带有 Cloud Project 与结算绑定的 GCP 开发者账号，缺少 Web 管理面板与容灾调度）；经评估确认其投入产出比过低且严重违背轻量化原则，决定彻底放弃并不再维护该插件。
