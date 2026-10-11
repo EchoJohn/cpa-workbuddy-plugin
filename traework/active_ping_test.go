@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -261,3 +263,53 @@ func TestDoActivePingMultiModelAllFail(t *testing.T) {
 		t.Fatalf("expected 2 attempts for 2 available models, got %d", attemptCount)
 	}
 }
+
+// TestSendActivePingTrae_ExitsImmediatelyOnFirstOutput 验证探活流收到首个有效 output（含思考片段）时立即成功退出，
+// 不再阻塞等待后续数百个 reasoning token 或连接 EOF。
+// [参数] t: 测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-11 21:50:00
+func TestSendActivePingTrae_ExitsImmediatelyOnFirstOutput(t *testing.T) {
+	origDirect := hostStreamDirectFn
+	defer func() { hostStreamDirectFn = origDirect }()
+
+	// 1. 构造模拟流：发送首个思考 output 后无限阻塞（若未首包即停则会超时）
+	firstChunk := "event: metadata\ndata: {\"model\":\"\"}\n\nevent: output\ndata: {\"response\":\"\",\"reasoning_content\":\"Let\"}\n\n"
+	hostStreamDirectFn = func(req *http.Request, bodyBytes []byte) (*hostHTTPStream, int, http.Header, error) {
+		r := &hangingReader{
+			r: strings.NewReader(firstChunk),
+		}
+		return &hostHTTPStream{liveBody: io.NopCloser(r)}, 200, http.Header{}, nil
+	}
+
+	// 2. 断言 sendActivePingTrae 在 500ms 内快速返回 nil
+	start := time.Now()
+	err := sendActivePingTrae(&traeAuth{UserID: "u1", Token: "t1"}, "glm-5.3-flash")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("sendActivePingTrae unexpected error: %v", err)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("sendActivePingTrae took %v, expected immediate return (< 500ms) on first output", elapsed)
+	}
+}
+
+// TestSendActivePingTrae_DetectsEventErrorOnHTTP200 验证上游返回 HTTP 200 但携带 event:error（如 4008 额度耗尽）时如实报错。
+// [参数] t: 测试上下文。
+// [返回] 无。
+// 最近修改时间：2026-10-11 21:50:00
+func TestSendActivePingTrae_DetectsEventErrorOnHTTP200(t *testing.T) {
+	origDirect := hostStreamDirectFn
+	defer func() { hostStreamDirectFn = origDirect }()
+
+	errSSE := "event: error\ndata: {\"code\":4008,\"message\":\"Your requests have exceeded the quota.\"}\n\nevent: done\ndata: {}\n\n"
+	hostStreamDirectFn = func(req *http.Request, bodyBytes []byte) (*hostHTTPStream, int, http.Header, error) {
+		return &hostHTTPStream{liveBody: io.NopCloser(strings.NewReader(errSSE))}, 200, http.Header{}, nil
+	}
+
+	err := sendActivePingTrae(&traeAuth{UserID: "u1", Token: "t1"}, "glm-5.3-flash")
+	if err == nil || !strings.Contains(err.Error(), "exceeded the quota") {
+		t.Fatalf("expected quota exceeded error on HTTP 200 event:error, got: %v", err)
+	}
+}
+

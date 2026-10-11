@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net/http"
@@ -54,21 +55,34 @@ func resetActivePingTimes() {
 	lastActivePingTimes = make(map[string]time.Time)
 }
 
+// isInternalNonChatTraeModel 判断模型 ID 是否为上游 get_detail_param 返回的内部子代理或占位配置（直接调用 llm_utils_chat 会报 2001）。
+// [参数] id: 模型配置名称。
+// [返回] bool: 属于内部非对话配置返回 true。
+// 最近修改时间：2026-10-11 21:55:00
+func isInternalNonChatTraeModel(id string) bool {
+	switch strings.ToLower(strings.TrimSpace(id)) {
+	case "custom_model_placeholder", "browser_use_subagent", "computer_use_subagent", "file_search_agent", "explore_sub_agent_v2", "summary":
+		return true
+	default:
+		return false
+	}
+}
+
 // pickRandomTraeModels 随机选取指定数量的不重复 Trae 模型列表供探活轮测。
 // [参数] sa: 账号凭据，用于缓存缺失时拉取可用模型；limit: 期望选取的最大模型数。
 // [返回] 随机打乱后的候选模型列表，至少包含一个兜底模型。
-// 最近修改时间：2026-10-09 23:45:00 支持多模型随机轮测
+// 最近修改时间：2026-10-11 21:55:00 过滤内部非对话子代理占位项
 func pickRandomTraeModels(sa *traeAuth, limit int) []string {
 	if limit <= 0 {
 		limit = 1
 	}
-	// 1. 从缓存或凭据提取候选模型并去重
+	// 1. 从缓存或凭据提取候选模型并去重（跳过内部非对话子代理占位项）
 	models := dynamicTraeModelsFromCacheOrAuth()
 	seen := make(map[string]struct{})
 	var candidates []string
 	for _, m := range models {
 		id := strings.TrimSpace(m.ID)
-		if id != "" {
+		if id != "" && !isInternalNonChatTraeModel(id) {
 			if _, ok := seen[id]; !ok {
 				seen[id] = struct{}{}
 				candidates = append(candidates, id)
@@ -82,7 +96,7 @@ func pickRandomTraeModels(sa *traeAuth, limit int) []string {
 			storeTraeDynamicModels(dyn)
 			for _, m := range dyn {
 				id := strings.TrimSpace(m.ID)
-				if id != "" {
+				if id != "" && !isInternalNonChatTraeModel(id) {
 					if _, ok := seen[id]; !ok {
 						seen[id] = struct{}{}
 						candidates = append(candidates, id)
@@ -123,11 +137,16 @@ func pickRandomTraeModel(sa *traeAuth) string {
 	return "claude-3-5-sonnet"
 }
 
+// sendActivePingTrae 对指定账号发起一次真实的流式活跃探测请求。
+// [参数] sa: Trae 账号凭据；chosenModel: 待测试的模型名称。
+// [返回] error: 传输失败、HTTP 非 2xx 或 SSE 返回 event:error 时返回错误；收到首个有效 output/done 事件即刻成功返回 nil。
+// 最近修改时间：2026-10-11 21:50:00 改用流式直连并在收到首个有效 output 时立即中止关闭流，消除思考模型生成整段思维链导致的 5~8 秒耗时
 func sendActivePingTrae(sa *traeAuth, chosenModel string) error {
+	// 1. 构造最小流式探活负载（stream=true, max_tokens=1）
 	msgs := toTraeMessages([]map[string]any{
 		{"role": "user", "content": "hi"},
 	})
-	payload := buildTraePayload(msgs, chosenModel, false, 5, nil, nil, nil, "")
+	payload := buildTraePayload(msgs, chosenModel, true, 1, nil, nil, nil, "")
 
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -135,21 +154,99 @@ func sendActivePingTrae(sa *traeAuth, chosenModel string) error {
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultActivePingTimeout)
-	defer cancel()
 
+	// 2. 通过流式通道发起请求，避免 hostHTTPDo 全量读取等待数百个思考 token 生成完毕
 	url := apiHostFor(sa) + llmUtilsChatPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
 	if err != nil {
+		cancel()
 		return fmt.Errorf("create ping request: %w", err)
 	}
 	req.Header = buildTraeAuthHeaders(sa)
 
-	resp, err := hostHTTPDo(req)
+	stream, statusCode, _, err := hostStreamDirectFn(req, raw)
 	if err != nil {
+		cancel()
 		return fmt.Errorf("llm_utils_chat transport: %w", err)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("upstream HTTP %d: %s", resp.StatusCode, truncateRedacted(string(resp.Body), 120))
+	host := apiHostFor(sa)
+	defer func() {
+		// 异步关闭底层流并预热下一条 Keep-Alive 连接，确保首包验证通过后零阻塞返回且下次点击免握手
+		go func() {
+			stream.Close()
+			cancel()
+			prewarmStreamHTTPClient(host)
+		}()
+	}()
+
+	reader := newHostStreamReader(stream)
+	if statusCode < 200 || statusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(reader, maxBodyBytes))
+		return fmt.Errorf("upstream HTTP %d: %s", statusCode, truncateRedacted(string(body), 120))
+	}
+
+	// 3. 扫描 SSE 首包：收到首个有效 output 或 done 即刻返回，遇到 event:error 如实报错
+	return verifyActivePingTraeStream(reader, statusCode)
+}
+
+// prewarmStreamHTTPClient 在后台向指定上游主机发送一次轻量 HEAD 请求以预热 TLS Keep-Alive 连接池。
+// 仅在生产宿主环境（hostBridgeAvailable 为 true）触发，单测环境下直接跳过。
+// [参数] apiHost: 上游 API 根地址。
+// [返回] 无。
+// 最近修改时间：2026-10-11 21:58:00
+func prewarmStreamHTTPClient(apiHost string) {
+	if !hostBridgeAvailable() || strings.TrimSpace(apiHost) == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, strings.TrimRight(apiHost, "/")+"/", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("User-Agent", "node")
+	req.Header.Set("Connection", "keep-alive")
+	resp, err := streamHTTPClient().Do(req)
+	if err != nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+}
+
+// verifyActivePingTraeStream 扫描探活 SSE 流，收到首个有效输出即刻退出，遇到错误事件返回错误。
+// [参数] r: 上游 SSE 字节流；statusCode: 上游 HTTP 状态码。
+// [返回] error: 遇到 event:error 或空流时返回错误，收到首个有效 output/done 返回 nil。
+// 最近修改时间：2026-10-11 21:50:00 首包即停，避免等待完整思维链并拦截 HTTP 200 下的业务错误
+func verifyActivePingTraeStream(r io.Reader, statusCode int) error {
+	// 1. 初始化终态记录器并逐帧扫描 SSE
+	var terminal traeSSETerminal
+	err := scanSSE(r, func(ev sseEvent) error {
+		switch ev.Event {
+		case "output":
+			// 2. 收到首个有效正文或思考 token 即证明模型可用，立即终止扫描
+			if _, _, _, ok := terminal.recordOutput(ev.Data); ok {
+				return errTraeStreamDone
+			}
+		case "done":
+			terminal.recordDone()
+			return errTraeStreamDone
+		case "error":
+			// 3. 拦截 HTTP 200 下的业务错误（如 4008 额度耗尽、2001 模型无效、4011 限流）
+			msg := streamErrData(ev.Data)
+			if msg == "" {
+				msg = ev.Data
+			}
+			return fmt.Errorf("upstream %d: %s", statusCode, truncateRedacted(msg, 200))
+		}
+		return nil
+	}, terminal.hasPayload)
+	if err != nil {
+		return err
+	}
+	// 4. 校验是否收到至少一个有效输出或完成事件
+	if !terminal.hasPayload() {
+		return fmt.Errorf("upstream %d: invalid SSE response: missing output and done event", statusCode)
 	}
 	return nil
 }

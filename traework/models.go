@@ -406,7 +406,7 @@ func authModelsForIndex(authIndex string) []string {
 	out := make([]string, 0, len(models)+1)
 	for _, m := range models {
 		id := strings.TrimSpace(m.ID)
-		if id == "" {
+		if id == "" || isInternalNonChatTraeModel(id) {
 			continue
 		}
 		if _, ok := seen[id]; ok {
@@ -427,7 +427,7 @@ func authModelsForIndex(authIndex string) []string {
 //
 // [参数] req：管理请求，query 参数 auth_index 指定账号。
 // [返回] {models:[...]}；缺少 auth_index 时返回 {error}。
-// 最近修改时间 2026-10-09（新增测试按钮指定模型选择支持）
+// 最近修改时间 2026-10-11 21:58:00（打开测试弹窗时后台预热流式 TLS 连接）
 func handleModelsQuery(req pluginapi.ManagementRequest) map[string]any {
 	authIndex := ""
 	if vals := req.Query["auth_index"]; len(vals) > 0 {
@@ -436,5 +436,6 @@ func handleModelsQuery(req pluginapi.ManagementRequest) map[string]any {
 	if authIndex == "" {
 		return map[string]any{"error": "auth_index is required"}
 	}
+	go prewarmStreamHTTPClient(apiHostFor(nil))
 	return map[string]any{"models": authModelsForIndex(authIndex)}
 }

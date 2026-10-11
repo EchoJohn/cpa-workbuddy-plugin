@@ -1,6 +1,17 @@
 # TraeWork Plugin Changelog
 
 
+## 0.2.8
+
+### Fix - 测试模型与定时探活改为流式首包即停 + Keep-Alive 预热，消除思考模型 5~8s 思维链等待
+
+- 变更要点:
+  1. 根因：0.2.6 修复了 `scanSSE`（主聊天路径），但面板「测试」按钮（`/test-active` -> `sendActivePingTrae`）及后台定时探活仍调用 `hostHTTPDo(req)`（`stream: false`）；宿主 `host.http.do` 内部执行 `io.ReadAll(resp.Body)`，而上游 `llm_utils_chat` 对思考型模型（如 `glm-5.3-flash`、`qwen3.8-max`）忽略 `max_tokens: 5` 对 `reasoning_content` 的限制，导致测试 `glm-5.3-flash` 时必须等待其完整生成 264 个思考 token（269 个 SSE 事件）后才返回，耗时达 5.6~8.1 秒；且 `sendActivePingTrae` 仅检查 HTTP 200 状态码而未解析 SSE `event: error`，导致额度耗尽（4008）或内部非对话配置（2001）被误判为活跃成功。
+  2. 修复：`sendActivePingTrae` 改走流式通道（`stream: true, max_tokens: 1`）并调用 `verifyActivePingTraeStream` 逐帧扫描 SSE；一旦收到首个有效 `event: output`（无论是正文还是思考首词）立即终止扫描并异步关闭流，不再等待后续数百个思考 token；若收到 `event: error` 则如实返回错误。
+  3. 连接池预热与候选清洗：打开测试弹窗（`handleModelsQuery`）及每次测试结束时，后台异步发送轻量 `HEAD` 请求预热 `streamHTTPClient` 的 TLS Keep-Alive 连接池，省去跨国 TCP+TLS 握手耗时（约 1s）；同时过滤 `get_detail_param` 返回的内部非对话子代理占位项（`custom_model_placeholder`、`browser_use_subagent` 等）。
+  4. 回归测试：在 `active_ping_test.go` 新增 `TestSendActivePingTrae_ExitsImmediatelyOnFirstOutput` 与 `TestSendActivePingTrae_DetectsEventErrorOnHTTP200`，并通过哨兵必失败反证确证生效。
+- 涉及文件: traework/active_ping.go、traework/models.go、traework/active_ping_test.go、traework/VERSION、traework/main.go、traework/CHANGELOG.md
+
 ## 0.2.7
 
 ### Fix - 补齐 oauth-excluded-models 过滤，使多服务商同名模型可从 traework 摘除
