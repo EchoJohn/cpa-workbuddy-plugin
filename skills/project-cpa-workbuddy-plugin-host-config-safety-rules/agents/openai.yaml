@@ -1,0 +1,3 @@
+interface:
+  display_name: "cpa-workbuddy-plugin 生产宿主配置安全"
+  short_description: "生产 CPA 宿主配置存储契约与配置损坏类故障（管理面板 404 / 端口漂移 / 外网 502）的定位与带回滚恢复；含配置写入红线与防呆。排查生产配置或配置类故障时自动加载。"
