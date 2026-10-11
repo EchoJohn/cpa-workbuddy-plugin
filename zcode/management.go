@@ -71,6 +71,7 @@ func managementRegistration() managementRegistrationResponse {
 		},
 		Resources: []resourceRoute{
 			{Path: "/panel", Menu: "ZCode", Description: "ZCode Provider dashboard: accounts, models, import, active test."},
+			{Path: "/oauth-bridge", Menu: "", Description: "ZCode OAuth authorization bridge page for CPA host login flow."},
 		},
 	}
 }
@@ -134,6 +135,11 @@ func handleManagement(raw []byte) ([]byte, error) {
 
 	if method == http.MethodGet && (subPath == "/" || subPath == "/panel") {
 		return handlePanelPage(), nil
+	}
+
+	if method == http.MethodGet && subPath == "/oauth-bridge" {
+		req.Query = urlQuery
+		return okEnvelope(handleOAuthBridge(req))
 	}
 
 	getQueryParam := func(key string) string {

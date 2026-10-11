@@ -351,3 +351,38 @@ func maskAPIKey(key string) string {
 	}
 	return key[:4] + "...." + key[len(key)-4:]
 }
+
+// saveAPIKeyAccount 保存单条 API Key 账号凭据文件并返回落盘结构。
+func saveAPIKeyAccount(apiKey, label string) (*StoredAuth, error) {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return nil, fmt.Errorf("empty api_key")
+	}
+	authID := authIDFor(apiKey)
+	fileName := authFileNameFor(apiKey)
+	fullPath := filepath.Join(getAccountsDir(), fileName)
+
+	if label == "" {
+		label = "ZCode " + maskAPIKey(apiKey)
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	sa := &StoredAuth{
+		Type:       zcodeProviderID,
+		Provider:   zcodeProviderID,
+		AuthID:     authID,
+		APIKey:     apiKey,
+		Label:      label,
+		Disabled:   false,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		Models:     defaultModels,
+		TestFailed: false,
+	}
+
+	if err := writeAuthFileDirect(fullPath, sa); err != nil {
+		return nil, err
+	}
+	return sa, nil
+}
+

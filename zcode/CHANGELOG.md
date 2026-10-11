@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.3] - 2026-10-11
+
+### Added
+- 实现管理后台「OAuth 登录」桥接授权机制：支持 `StartLogin`、桥接授权输入页（`/oauth-bridge`）、`PollLogin` 轮询保存与 `RefreshAuth`，用户可在 CPA 管理后台直接点击 ZCode 发起授权绑定并自动保存账号。
+- 恢复 `Capabilities.AuthProvider = true`，管理后台「OAuth 登录」卡片恢复展示且点击可正常交互完成授权。
+
 ## [0.1.2] - 2026-10-11
 
 ### Fixed
