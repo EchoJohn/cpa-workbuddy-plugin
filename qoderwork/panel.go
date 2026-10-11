@@ -25,7 +25,7 @@ type wbAccount struct {
 	Disabled  bool            `json:"disabled"`
 	Exhausted bool            `json:"exhausted"`
 	Selected  bool            `json:"selected"` // panel active routing card
-	Preserve  bool            `json:"preserve"` // watchdog parked this account; never routed
+	TestFailed bool           `json:"test_failed"` // scheduled active ping failed while credits remain
 	Credits   *creditsSummary `json:"credits,omitempty"`
 	Checkin   *checkinSummary `json:"checkin,omitempty"`
 	Error     string          `json:"error,omitempty"`
@@ -186,30 +186,25 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 	checkinAutoMu.RLock()
 	auto := checkinAuto
 	checkinAutoMu.RUnlock()
-	// Ensure default selection for panel + scheduler (first usable card).
+	// Sync the 「测试」mirror BEFORE computing the panel selection, so
+	// ensureDefaultActiveAuth applies the same availability contract as
+	// scheduler.pick. The refresh also prunes entries for accounts that no
+	// longer exist so the scheduler can't pin a session to a deleted auth.
+	refreshTestFailedSetFromDisk()
+	// Ensure default selection for panel + scheduler (lowest-credit available card).
 	activeID := ensureDefaultActiveAuth(out)
-	// Sync preserve markers from the disk-backed map — single source of
-	// truth. refreshPreserveSetFromDisk also prunes entries for accounts
-	// that no longer exist so the scheduler can't pin a session to a
-	// deleted auth. （同步自 workbuddy-provider）
-	preserveSize := refreshPreserveSetFromDisk()
-	// On force refresh, reconcile preserve flags against the already-fetched
-	// credits so the badges in THIS response are correct without waiting for
-	// the next watchdog interval. Zero extra upstream QPS — `out` carries the
-	// credits the dashboard just pulled (closes the "刷新后 badge 还是旧状态"
-	// gap caused by the first-tick init race and 10m blind window).
 	if force {
-		preserveReconcileFromAccounts(out)
-		// Re-mirror so the badge loop below sees the freshly-written disk
-		// flags instead of the pre-write in-memory snapshot.
-		preserveSize = refreshPreserveSetFromDisk()
+		// Re-mirror so the badge loop below sees any 测试 tag written by
+		// another session since the pre-selection refresh above.
+		refreshTestFailedSetFromDisk()
 	}
 	// Aggregate credits for panel/API consumers (all accounts currently in out).
 	sum := summarizeCredits(out)
-	// Mark selected account in list for UI; preserve comes from the disk mirror.
+	// Mark selected account in list for UI; test_failed comes from the disk
+	// mirror so the badge always matches the routing contract.
 	for i := range out {
 		out[i].Selected = out[i].AuthID == activeID
-		out[i].Preserve = isPreserve(out[i].AuthID)
+		out[i].TestFailed = isTestFailed(out[i].AuthID)
 		// Failover state is in-memory only; surface it so the panel can show
 		// consecutive failures + cooldown.
 		if count, until, ok := failoverStateSnapshot(out[i].AuthID); ok && count > 0 {
@@ -221,16 +216,14 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 		}
 	}
 	resp := map[string]any{
-		"accounts":                out,
-		"active_auth":             activeID,
-		"checkin_auto":            auto,
-		"lifecycle_auto":          lifecycleEnabled(),
-		"preserve_auto":           preserveWatchdogEnabled(),
-		"preserve_threshold":      preserveThreshold(),
-		"schedule":                []string{"00:00", "04:00", "08:00", "12:00", "16:00", "20:00"},
-		"server_time":             time.Now().Format("2006-01-02 15:04:05"),
-		"summary":                 sum,
-		"preserve_pool_size":      preserveSize,
+		"accounts":       out,
+		"active_auth":    activeID,
+		"scheduler_mode": loadedSchedulerMode(),
+		"checkin_auto":   auto,
+		"lifecycle_auto": lifecycleEnabled(),
+		"schedule":       []string{"00:00", "04:00", "08:00", "12:00", "16:00", "20:00"},
+		"server_time":    time.Now().Format("2006-01-02 15:04:05"),
+		"summary":        sum,
 	}
 	if len(life) > 0 {
 		resp["lifecycle"] = life

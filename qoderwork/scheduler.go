@@ -12,6 +12,7 @@ package main
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"sync"
 
@@ -96,32 +97,37 @@ func handleSchedulerPick(raw []byte) ([]byte, error) {
 	if len(wbCandidates) == 0 {
 		return okEnvelope(pluginapi.SchedulerPickResponse{Handled: false})
 	}
-	// Preserve filter: accounts the watchdog flagged (credits below
-	// preserve_threshold) are kept out of routing entirely so they keep a
-	// small credit buffer. Place this BEFORE the cooldown filter so the
-	// lastNonEmpty fallback can still see preserved accounts when every
-	// qoderwork account is preserved — we don't want a fleet-wide credit
-	// reset to lock routing. Like the cooldown filter below, when every
-	// account is preserved we keep the full list so the pickers fall back to
-	// the current pin. （同步自 workbuddy-provider）
-	preserveFiltered := make([]pluginapi.SchedulerAuthCandidate, 0, len(wbCandidates))
+	// Hard exclusion: 「测试」标签 (scheduled active ping failed while credits
+	// remained) / 冷却 (failover cooldown) accounts never carry traffic. Both
+	// are "not available" by product definition, so they are filtered
+	// unconditionally — there is NO "keep the full list" fallback: when every
+	// candidate is excluded we defer (Handled: false) so the host's built-in
+	// scheduler can fail over to OTHER providers instead of pinning the request
+	// to an account we just declared unusable.
+	available := make([]pluginapi.SchedulerAuthCandidate, 0, len(wbCandidates))
 	for _, c := range wbCandidates {
-		if !isAccountPreserved(c.ID) {
-			preserveFiltered = append(preserveFiltered, c)
+		if isTestFailed(c.ID) || isAccountCoolingDown(c.ID) {
+			continue
 		}
+		available = append(available, c)
 	}
-	if len(preserveFiltered) > 0 {
-		wbCandidates = preserveFiltered
+	if len(available) == 0 {
+		return okEnvelope(pluginapi.SchedulerPickResponse{Handled: false})
 	}
-	filtered := make([]pluginapi.SchedulerAuthCandidate, 0, len(wbCandidates))
-	for _, c := range wbCandidates {
-		if !isAccountCoolingDown(c.ID) {
-			filtered = append(filtered, c)
+	wbCandidates = available
+
+	// Low-credit first: burn the soonest-to-exhaust accounts first, so the
+	// fleet's remaining balance is concentrated on fewer accounts instead of
+	// spread thin everywhere. Unknown credits (-1, no cached snapshot yet) go
+	// LAST — never let an unmeasured account jump ahead of a measured one.
+	sort.SliceStable(wbCandidates, func(i, j int) bool {
+		left, _ := cachedCreditsScore(wbCandidates[i].ID)
+		right, _ := cachedCreditsScore(wbCandidates[j].ID)
+		if (left < 0) != (right < 0) {
+			return right < 0
 		}
-	}
-	if len(filtered) > 0 {
-		wbCandidates = filtered
-	}
+		return left < right
+	})
 
 	// Build thin view for active-auth picker.
 	cands := make([]activeAuthCandidate, 0, len(wbCandidates))
@@ -180,13 +186,4 @@ func cachedCreditsScore(authID string) (int64, bool) {
 		return -1, false
 	}
 	return entry.credits.TotalRemain, isCreditsExhausted(entry.credits)
-}
-
-// isAccountPreserved reports whether the account is currently flagged by the
-// preserve watchdog and must be kept out of routing. Symmetric with
-// isAccountCoolingDown for the cooldown filter; returns true when the
-// watchdog has set the top-level preserve flag on disk and mirrored it into
-// preserveSet. （同步自 workbuddy-provider）
-func isAccountPreserved(authID string) bool {
-	return isPreserve(authID)
 }

@@ -300,6 +300,7 @@ func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
 				"label":      f.Label,
 				"disabled":   f.Disabled,
 				"selected":   getActiveAuthID() == f.ID,
+				"test_failed": isTestFailed(f.ID),
 			}
 			if err != nil {
 				acct["error"] = err.Error()

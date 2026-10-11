@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -67,12 +66,6 @@ func configure(raw []byte) {
 	nextSchedulerMode := schedulerModeSession
 	nextKeepaliveAuto := true
 	nextMgmtKey := ""
-	// preserve watchdog knobs: a credit-balance threshold below which an
-	// account is parked in the preserve set; the tick interval; and the
-	// enable/disable switch. （同步自 workbuddy-provider）
-	nextPreserveThreshold := preserveThresholdDefault
-	nextPreserveInterval := preserveWatchdogIntervalDefault
-	nextPreserveEnabled := preserveWatchdogEnabledDefault
 	// failover default: enabled. Explicit account_failover: false disables the
 	// whole cooldown mechanism (pre-failover behavior).
 	nextFailoverEnabled := true
@@ -132,29 +125,6 @@ func configure(raw []byte) {
 					v = strings.Trim(v, "\"'")
 					nextKeepaliveAuto = v == "true" || v == "1" || v == "yes" || v == "on"
 				}
-				// Preserve watchdog knobs: a credit-balance threshold below
-				// which an account is parked in the preserve set; the tick
-				// interval (Go duration syntax, e.g. "10m"); and the
-				// enable/disable switch. （同步自 workbuddy-provider）
-				if strings.HasPrefix(line, "preserve_threshold:") {
-					v := strings.TrimSpace(strings.TrimPrefix(line, "preserve_threshold:"))
-					v = strings.Trim(v, "\"'")
-					if n, perr := strconv.ParseInt(v, 10, 64); perr == nil && n >= 0 {
-						nextPreserveThreshold = n
-					}
-				}
-				if strings.HasPrefix(line, "preserve_watchdog_interval:") {
-					v := strings.TrimSpace(strings.TrimPrefix(line, "preserve_watchdog_interval:"))
-					v = strings.Trim(v, "\"'")
-					if d, perr := time.ParseDuration(v); perr == nil && d > 0 {
-						nextPreserveInterval = d
-					}
-				}
-				if strings.HasPrefix(line, "preserve_watchdog_enabled:") {
-					v := strings.TrimSpace(strings.TrimPrefix(line, "preserve_watchdog_enabled:"))
-					v = strings.Trim(v, "\"'")
-					nextPreserveEnabled = v == "true" || v == "1" || v == "yes" || v == "on"
-				}
 			if strings.HasPrefix(line, "retry_on_4xx:") {
 				retryOn4xxSeen = true
 				if n, ok := parseRetryOn4xxLine(line); ok {
@@ -197,14 +167,9 @@ func configure(raw []byte) {
 	keepaliveAuto = nextKeepaliveAuto
 	keepaliveAutoMu.Unlock()
 
-	setPreserveConfig(nextPreserveThreshold, nextPreserveInterval, nextPreserveEnabled)
 
-	// Drop a non-blocking tick request so the freshly (re)configured
-	// threshold/interval apply immediately rather than after a full interval
-	// (closes the "register just changed something, why does the badge still
-	// show the old state?" UX gap). Reconfigure storms collapse onto one tick
-	// via requestPreserveTick's buffered chan cap 1. （同步自 workbuddy-provider）
-	requestPreserveTick()
+	// Reconfigure storms collapse onto one tick via requestWatchdogTick's buffered chan cap 1.
+	requestWatchdogTick()
 
 	// retry_on_4xx: per-request account-failover budget, applied under its
 	// own lock so the executor loops reading it (loadedRetryOn4xx) stay

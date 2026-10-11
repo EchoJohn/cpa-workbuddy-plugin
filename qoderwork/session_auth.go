@@ -189,7 +189,7 @@ func pickSessionAuth(sessionKey string, candidates []activeAuthCandidate) string
 	usableSet := make(map[string]struct{}, len(candidates))
 	for _, c := range candidates {
 		live[c.ID] = struct{}{}
-		if !c.Disabled && !c.Exhausted && !isAccountCoolingDown(c.ID) {
+		if !c.Disabled && !c.Exhausted && accountRoutable(c.ID) {
 			usable = append(usable, c.ID)
 			usableSet[c.ID] = struct{}{}
 		}
@@ -209,16 +209,11 @@ func pickSessionAuth(sessionKey string, candidates []activeAuthCandidate) string
 	}
 
 	if len(usable) == 0 {
-		// Everything disabled/exhausted/cooling-down — keep current pin if the
-		// account still exists, else the first candidate (mirrors pickActiveAuth
-		// fallback). Cooling-down accounts are still eligible here so a session
-		// keeps its pin rather than erroring out when every account is down.
-		if b, ok := sessionAuthBindings[sessionKey]; ok {
-			if _, isLive := live[b.AuthID]; isLive {
-				return b.AuthID
-			}
-		}
-		return candidates[0].ID
+		// Everything disabled/exhausted/cooling-down/测试失败: no healthy
+		// account exists. Return "" so handleSchedulerPick defers (Handled:
+		// false) to the host's built-in scheduler (cross-provider failover);
+		// keep the binding so recovery can re-pin it once an account recovers.
+		return ""
 	}
 
 	// Fresh assignment: prefer accounts with no live bindings (spreads

@@ -268,7 +268,6 @@ func clearDeletedAccountState(keys ...string) {
 		lifecycleState.Delete(k)
 		accountCache.Delete(k)
 		clearActiveAuthIfMatch(k)
-		preserveSetClear(k)
 		clearFailoverStateForAuth(k)
 		evictSessionBindingsForAuth(k)
 	}

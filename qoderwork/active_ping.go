@@ -221,6 +221,14 @@ func doActivePing(authIndex, authID string, sa *storedAuth) error {
 
 	// 4. 处理探活结果
 	if !success {
+		// 定时活跃测试全部失败：仍有积分的账号打 test_failed 标签
+		if idx, idxErr := hostAuthIndexForPhys(key); idxErr == nil {
+			if cr := cachedCredits(authID); cr != nil && cr.TotalRemain > 0 {
+				if tagErr := persistTestFailedToggle(idx, authID, true); tagErr != nil {
+					log.Printf("[qoderwork] test_failed tag %s failed: %v", authID, tagErr)
+				}
+			}
+		}
 		if lastErr == nil {
 			lastErr = fmt.Errorf("active ping timeout after %v", defaultActivePingMaxBudget)
 		}
@@ -228,6 +236,12 @@ func doActivePing(authIndex, authID string, sa *storedAuth) error {
 	}
 
 	recordActivePing(key)
+	// 定时活跃测试成功：清除既有 test_failed 标签
+	if idx, idxErr := hostAuthIndexForPhys(key); idxErr == nil {
+		if err := persistTestFailedToggle(idx, authID, false); err != nil {
+			log.Printf("[qoderwork] test_failed clear %s failed: %v", authID, err)
+		}
+	}
 	log.Printf("[qoderwork] active ping success for %s with model %s", key, successModel)
 	return nil
 }
