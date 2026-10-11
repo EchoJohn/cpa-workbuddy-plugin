@@ -366,14 +366,48 @@ func jsonResultHeaders() http.Header {
 // Feed importer
 // -----------------------------------------------------------------------------
 
+// feedImporterOrphanPolls 是判定"本实例已被宿主退役"所需的连续关闭轮询数。热重载换
+// 句柄时，活跃实例最多经历一次因在途切换导致的关闭轮询，下一轮就会拿到新句柄；因此
+// 连续多轮关闭只可能是退役实例——它的 usageStore 永远不会再被换成新句柄。
+// 最近修改时间：2026-10-12；改动原因：退役实例的导入协程必须自行退出，否则持续 tail
+// 共享 feed、把自身内存偏移写进跨实例共享的 .offset 文件并刷日志。
+const feedImporterOrphanPolls = 3
+
+// currentStoreClosed 报告当前实例持有的 store 句柄是否已关闭。
+// 最近修改时间：2026-10-12；改动原因：为退役判定提供句柄健康信号。
+func currentStoreClosed() bool {
+	storeMu.RLock()
+	store := usageStore
+	storeMu.RUnlock()
+	return store != nil && store.Closed()
+}
+
+// importerOrphanCount 计算新一轮的连续关闭轮询数，并给出是否应当退出。只有**连续**关闭
+// 才计入退役判定：宿主完成换句柄后活跃实例会重新拿到健康句柄，计数必须归零。
+// 最近修改时间：2026-10-12；改动原因：把退役判定抽成纯函数，使重置语义可被表驱动用例覆盖。
+func importerOrphanCount(closed bool, previous int) (int, bool) {
+	if !closed {
+		return 0, false
+	}
+	next := previous + 1
+	return next, next >= feedImporterOrphanPolls
+}
+
 func feedImporterLoop() {
 	trackerCfgMu.RLock()
 	interval := trackerCfg.PollInterval
 	trackerCfgMu.RUnlock()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	orphanPolls := 0
 	for range ticker.C {
 		ensureStoreOpen()
+		var stop bool
+		orphanPolls, stop = importerOrphanCount(currentStoreClosed(), orphanPolls)
+		if stop {
+			trackerWarnf("feed: importer stopping after %d closed-store polls (instance retired)", orphanPolls)
+			return
+		}
 		syncUsageFeed()
 	}
 }

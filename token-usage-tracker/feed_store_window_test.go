@@ -132,3 +132,143 @@ func TestReopenStoreKeepsHandleWhenConfigUnchanged(t *testing.T) {
 	}
 	defer third.Close()
 }
+
+// 最近修改时间：2026-10-11；改动原因：覆盖"只有连续关闭才累计退役判定"的重置语义。
+func TestImporterOrphanCountRequiresConsecutiveClosedPolls(t *testing.T) {
+	cases := []struct {
+		name      string
+		sequence  []bool
+		wantCount int
+		wantStop  bool
+	}{
+		{"连续三轮关闭后判定退役", []bool{true, true, true}, feedImporterOrphanPolls, true},
+		{"两轮关闭不足以判定", []bool{true, true}, 2, false},
+		{"一次健康轮次必须清零计数", []bool{true, true, false, true, true}, 2, false},
+		{"穿插健康的长序列永不退出", []bool{true, true, false, true, true, false, true, true}, 2, false},
+		{"全程健康计数恒为零", []bool{false, false, false}, 0, false},
+	}
+	for _, c := range cases {
+		count := 0
+		stop := false
+		for _, closed := range c.sequence {
+			count, stop = importerOrphanCount(closed, count)
+		}
+		if count != c.wantCount || stop != c.wantStop {
+			t.Errorf("%s: count=%d stop=%v, want count=%d stop=%v", c.name, count, stop, c.wantCount, c.wantStop)
+		}
+	}
+}
+
+// 最近修改时间：2026-10-11；改动原因：锁定退役实例的导入协程会自行退出的契约。
+func TestFeedImporterLoopExitsWhenStoreClosed(t *testing.T) {
+	resetFeedState()
+	defer resetFeedState()
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "s.db")
+	store, err := usagestats.Open(usagestats.Config{DataPath: dbPath, RetentionDays: 365, FlushInterval: time.Second, FlushMaxRecords: 100, SyncOnRecord: true})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	// 1. 模拟宿主热重载后本实例被退役：句柄已关闭且不会再被换新句柄。
+	if err := store.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	storeMu.Lock()
+	usageStore = store
+	appliedStoreKey = "retired-instance"
+	storeMu.Unlock()
+	trackerCfgMu.Lock()
+	trackerCfg = trackerConfig{
+		FeedEnabled:   true,
+		FeedPath:      filepath.Join(dir, "feed.ndjson"),
+		DBPath:        dbPath,
+		RetentionDays: 365,
+		FlushInterval: time.Second,
+		PollInterval:  10 * time.Millisecond,
+	}
+	trackerCfgMu.Unlock()
+
+	// 2. 连续若干轮关闭后循环必须自己返回，而不是永久 tail 共享 feed。
+	done := make(chan struct{})
+	go func() {
+		feedImporterLoop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("retired instance importer loop did not exit")
+	}
+	if !currentStoreClosed() {
+		t.Fatalf("store should still report closed after importer exit")
+	}
+}
+
+// 最近修改时间：2026-10-11；改动原因：证明单次换句柄不会误杀活跃实例的导入循环。
+func TestFeedImporterLoopSurvivesHandleSwapAndResumes(t *testing.T) {
+	resetFeedState()
+	defer resetFeedState()
+
+	dir := t.TempDir()
+	stale, err := usagestats.Open(usagestats.Config{DataPath: filepath.Join(dir, "stale.db"), RetentionDays: 365, FlushInterval: time.Second, FlushMaxRecords: 100, SyncOnRecord: true})
+	if err != nil {
+		t.Fatalf("open stale: %v", err)
+	}
+	if err := stale.Close(); err != nil {
+		t.Fatalf("close stale: %v", err)
+	}
+
+	// 1. 先让循环处于"关闭句柄"状态跑几轮（未到退役判定阈值）。
+	storeMu.Lock()
+	usageStore = stale
+	appliedStoreKey = "swap-window"
+	storeMu.Unlock()
+	trackerCfgMu.Lock()
+	trackerCfg = trackerConfig{
+		FeedEnabled:   true,
+		FeedPath:      filepath.Join(dir, "feed.ndjson"),
+		DBPath:        filepath.Join(dir, "stale.db"),
+		RetentionDays: 365,
+		FlushInterval: time.Second,
+		PollInterval:  50 * time.Millisecond,
+	}
+	trackerCfgMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		feedImporterLoop()
+		close(done)
+	}()
+	// 只让它经历 1~2 轮关闭（阈值为 3 轮），留出足够余量避免定时器抖动导致误退出。
+	time.Sleep(120 * time.Millisecond)
+
+	// 2. 换入健康句柄（模拟宿主完成换句柄）：计数必须归零，循环不得退出。
+	live, err := usagestats.Open(usagestats.Config{DataPath: filepath.Join(dir, "live.db"), RetentionDays: 365, FlushInterval: time.Second, FlushMaxRecords: 100, SyncOnRecord: true})
+	if err != nil {
+		t.Fatalf("open live: %v", err)
+	}
+	if err := live.RecordFeedNDJSON(validFeedLine(time.Now().UTC().Format(time.RFC3339Nano), "m", "u-before", 1, 1, 2)); err != nil {
+		t.Fatalf("record before swap: %v", err)
+	}
+	storeMu.Lock()
+	usageStore = live
+	appliedStoreKey = "live-handle"
+	storeMu.Unlock()
+	time.Sleep(250 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("importer loop exited although the store became healthy again")
+	default:
+	}
+
+	// 3. 之后再真正关闭句柄，循环应重新计数并退出（证明计数被健康轮次重置过）。
+	if err := live.Close(); err != nil {
+		t.Fatalf("close live: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("importer loop did not exit after the store finally closed")
+	}
+}

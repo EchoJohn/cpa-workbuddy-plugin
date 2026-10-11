@@ -608,6 +608,16 @@ func (s *Store) RestoreBackup(backup []byte) error {
 // 最近修改时间：2026-10-11；改动原因：文本与原 errors.New 保持一致，仅改为可判别的哨兵。
 var ErrStoreClosed = errors.New("store is closed")
 
+// Closed 报告 store 句柄是否已关闭。宿主热重载不会通知旧实例的后台协程退出
+// （shutdown 必须是 no-op，否则 cgo 在宿主拆除期有 SIGSEGV 风险），因此由调用方
+// 轮询此方法自行判定"本实例已被退役"并停止后台循环。
+// 最近修改时间：2026-10-12；改动原因：为 feed 导入循环提供可判别的退役信号。
+func (s *Store) Closed() bool {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.closed
+}
+
 func (s *Store) send(command any) error {
 	s.stateMu.RLock()
 	defer s.stateMu.RUnlock()
