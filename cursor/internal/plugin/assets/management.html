@@ -265,6 +265,9 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
     </div>
     <div class="modal-bd">
       <p class="hint" id="testModalHint">选择要测试的模型</p>
+      <div style="margin-bottom:8px">
+        <input type="text" id="testModelSearch" placeholder="搜索模型 (例如 auto, claude, gpt, default)..." style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--fg);font-size:12px;box-sizing:border-box;outline:none" oninput="filterTestModels(this.value)">
+      </div>
       <div class="model-list" id="testModelList"><div class="loading">加载模型中…</div></div>
       <div class="import-result" id="testResult"></div>
     </div>
@@ -576,13 +579,46 @@ function openTestModal(authId){
   const who = a ? displayName(a) : authId;
   const hint = document.getElementById("testModalHint");
   if(hint) hint.innerHTML = `选择要测试的模型：<b>${esc(who)}</b>`;
+  const sInp = document.getElementById("testModelSearch");
+  if(sInp) sInp.value = "";
   const res = document.getElementById("testResult");
   if(res){ res.className = "import-result"; res.innerHTML = ""; }
   const list = document.getElementById("testModelList");
-  if(list) list.innerHTML = '<div class="loading">加载可用模型中…</div>';
+  const cachedModels = (a && Array.isArray(a.models)) ? a.models.map(m => typeof m === "string" ? m : (m.id || m.name || "")) : [];
+  if(cachedModels.length && list){
+    renderTestModelButtons(cachedModels);
+  } else if(list){
+    list.innerHTML = '<div class="loading">加载可用模型中…</div>';
+  }
   const tm = document.getElementById("testModal");
   if(tm) tm.classList.add("show");
   loadModelsForTest(authId);
+}
+
+function renderTestModelButtons(models){
+  const list = document.getElementById("testModelList");
+  if(!list) return;
+  if(!models.length){
+    list.innerHTML = '<div class="loading">该账号暂无可测试模型</div>';
+    return;
+  }
+  list.innerHTML = models.map(m => `<button type="button" class="model-item" data-model="${esc(m)}">${esc(m)}</button>`).join("");
+  list.querySelectorAll("button.model-item").forEach(btn => {
+    btn.addEventListener("click", () => runActiveTest(btn, btn.dataset.model));
+  });
+  const sInp = document.getElementById("testModelSearch");
+  if(sInp && sInp.value) filterTestModels(sInp.value);
+}
+
+function filterTestModels(q){
+  const term = (q||"").trim().toLowerCase();
+  const list = document.getElementById("testModelList");
+  if(!list) return;
+  list.querySelectorAll("button.model-item").forEach(btn => {
+    const m = (btn.dataset.model||"").toLowerCase();
+    const match = !term || m.includes(term);
+    btn.style.display = match ? "" : "none";
+  });
 }
 
 function closeTestModal(){
@@ -596,22 +632,18 @@ function onTestMaskClick(e){
 }
 
 async function loadModelsForTest(authId){
-  const list = document.getElementById("testModelList");
-  if(!list) return;
   try {
     const d = await api("/models?auth_index=" + encodeURIComponent(authId));
     if(pendingTestAuthId !== authId) return;
     const models = (d && Array.isArray(d.models)) ? d.models : [];
-    if(!models.length){
-      list.innerHTML = '<div class="loading">该账号暂无可测试模型</div>';
-      return;
+    if(models.length){
+      renderTestModelButtons(models);
     }
-    list.innerHTML = models.map(m => `<button type="button" class="model-item" data-model="${esc(m)}">${esc(m)}</button>`).join("");
-    list.querySelectorAll("button.model-item").forEach(btn => {
-      btn.addEventListener("click", () => runActiveTest(btn, btn.dataset.model));
-    });
   } catch(e) {
-    list.innerHTML = `<div style="color:var(--err);padding:10px">${esc(e.message)}</div>`;
+    const list = document.getElementById("testModelList");
+    if(list && !list.querySelector("button.model-item")){
+      list.innerHTML = `<div style="color:var(--err);padding:10px">${esc(e.message)}</div>`;
+    }
   }
 }
 

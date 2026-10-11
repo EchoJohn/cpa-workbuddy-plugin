@@ -18,8 +18,8 @@
 ## 项目概况
 
 - 状态：活跃维护中。9 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。最新发布/就绪版本：
+  - `cursor-provider`: **0.1.4**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
   - `qoder-ai-provider`: **0.1.6**（纯 Go 实现阿里云安全盾 UMID 协议与设备指纹，彻底修复签到活动隐藏与风控拦截，生产真实验证通过）
-  - `cursor-provider`: **0.1.3**（消除双菜单重复注册、全量对齐 WorkBuddy/ZCode 现代设计规范、接入统一 Token 用量流）
   - `zcode-provider`: **0.1.1**（全新完成移植接入：BigModel Coding Plan Anthropic 协议、客户端桌面指纹 mimic、多账号与探活面板）
   - `traework-provider`: **0.2.5**（修复签到 x-device-id 尾零风控拦截 9074、调度器绝对时间对齐、默认会话路由与配置动态联动打通）
   - `qoderwork-provider`: **0.9.27**（CN 签到端点迁移 campaigns，彻底移除保号池，对齐测试标签与低积分排序调度）
@@ -31,6 +31,23 @@
 - 当前时间：2026-10-11 (GMT+8)
 
 ## 活动会话进展摘要
+
+- 当前会话（2026-10-11）：**Cursor Provider 0.1.4 修复模型获取与测试探活缺陷（Query 参数反序列化丢失、真实 256 模型展现、点号模型别名归一化与测试弹窗交互增强）**：
+  - 用户反馈与目标：用户指出 Cursor 插件的模型获取好像有问题，测试不通过，附带管理面板与测试弹窗截图。
+  - 核心根因精准收敛（双缺陷闭环）：
+    1. **为什么测试弹窗只有 7 个固定模型而卡片显示 256 个模型**：宿主 `CLIProxyAPI` 派发 RPC `management.handle` 时，URL 路径 `Path` 为纯路由 `/v0/management/plugins/cursor-provider/models`（不含 `?`），Query 参数封装在 `url.Values`（`map[string][]string`）。`cursor-provider` 内部 `managementRequest` 原代码将 `Query` 字段打了 `json:"-"` 忽略反序列化，且代码仅通过 `parseAuthIndexFromPath` 去从 `Path` 中解析 `?`，导致 `auth_index` 永远解析为空字符串 `""`；因此管理接口 `/models` 100% 触发 fallback 返回硬编码的 `defaultCursorModels`（7~8 个旧模型），使账号真实 DiscoverModels 获取到的 256 个模型被彻底屏蔽。
+    2. **为什么测试点选 `claude-3.5-sonnet` 报错 `Cursor stream failed: not_found`**：Cursor 上游 Connect-RPC `AgentService/Run` 遵循 Protobuf 模型契约，权威模型 ID 为连字符格式（如 `claude-3-5-sonnet`、`claude-3-5-haiku`、`claude-3-7-sonnet`、`gpt-4.5-preview`、`default`）；当 fallback 列表或外部请求传入带点号的 `claude-3.5-sonnet` 时，Cursor 服务端无该模型注册项，直接抛出 Connect-RPC end stream 错误 `not_found`。
+  - 实施修复与系统实现（v0.1.4）：
+    1. **对齐宿主 ManagementRequest 契约**：在 `management.go` 中将 `managementRequest` 字段 `Query` 正确声明为 `map[string][]string json:"Query"`；重构 `parseAuthIndexFromRequest` 优先提取 Query 参数并向下兼容 Path query string。
+    2. **优雅账号回退与真实模型展现**：新增 `getFirstAvailableCredential`，当请求未指定 `auth_index` 时自动获取首个可用账号的凭据执行 `DiscoverModels`，仅在系统无任何可用账号时才回退默认列表，确保账号拥有的 256 个真实模型顺利透传到前端。
+    3. **模型别名权威归一化机制（根除 `not_found`）**：在 `internal/openai/request.go` 中实现 `CanonicalModel`，将 `claude-3.5-sonnet` 等点号模型、版本后缀及常见别名统一映射为上游权威连字符 ID（`claude-3-5-sonnet` 等），并在 `handleTestActiveWithAuth` 与 `ParseChatRequest` 中统一接入；修正 `defaultCursorModels` 剔除错误点号项，补充 `default` 与 `gpt-4.5-preview`。
+    4. **前端测试弹窗海量模型搜索与秒开交互**：在 `assets/management.html` 的测试弹窗中增加实时搜索过滤输入框（`filterTestModels`），支持在 256 个海量模型中即时模糊过滤；打开弹窗时优先利用当前卡片已有的模型缓存即时秒开，后台并发异步校验刷新最新列表。
+  - 验证与门禁全绿：
+    - `python scripts/cgo-shim-build.py cursor` build/vet/test 全绿；
+    - 必失败哨兵反证测试成功拦截；
+    - Node 前端自动化测试 `node test/cursor/panel_auto_entry_repro.mjs` 场景全断言 100% 通过；
+    - 归档 6-review 风格回归报告 `doc/6-review/2026-10-11_180000_Cursor模型获取与测试探活修复_6-review.md`（STYLE: PASS）；
+    - 知识库沉淀 `Cursor-Connect-RPC模型命名契约与宿主管理Query反序列化修复.md` 并入网挂载。
 
 - 当前会话（2026-10-11）：**QoderWork 与 Qoder AI 两插件模型推理请求终止契约与长超时加固（对齐 WorkBuddy 成熟机制）**：
   - 用户反馈与目标：测试出 Qoder 的两个插件模型请求有些问题，不稳定且有时候超时时间很长，要求参考 WorkBuddy 插件排查推理请求不完善之处并彻底修复。

@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,15 +13,21 @@ import (
 	"github.com/luode0320/cpa-workbuddy-plugin/cursor/internal/cursorapi"
 	"github.com/luode0320/cpa-workbuddy-plugin/cursor/internal/cursorauth"
 	"github.com/luode0320/cpa-workbuddy-plugin/cursor/internal/cursorproto"
+	"github.com/luode0320/cpa-workbuddy-plugin/cursor/internal/openai"
 )
 
-// parseAuthIndexFromPath 从请求路径或 URL 查询参数中解析 auth_index。
-// [参数] rawPath: 包含路径与可选 query string 的字符串。
-// [返回] 解析出的 auth_index 字符串，若无则返回空字符串。
-// 最近修改时间 2026-10-11（新增管理接口查询参数解析支持）
-func parseAuthIndexFromPath(rawPath string) string {
-	if idx := strings.Index(rawPath, "?"); idx >= 0 {
-		query, err := url.ParseQuery(rawPath[idx+1:])
+// parseAuthIndexFromRequest 从管理请求中解析 auth_index，优先从 Query 参数提取，向下兼容 URL Path query string。
+// [参数] request: 管理 API 请求对象。
+// [返回] 解析出的 auth_index 字符串，未指定时返回空字符串。
+// 最近修改时间 2026-10-11（修复 Query map[string][]string 与 Path 解析兼容）
+func parseAuthIndexFromRequest(request managementRequest) string {
+	if vals, ok := request.Query["auth_index"]; ok && len(vals) > 0 {
+		if v := strings.TrimSpace(vals[0]); v != "" {
+			return v
+		}
+	}
+	if idx := strings.Index(request.Path, "?"); idx >= 0 {
+		query, err := url.ParseQuery(request.Path[idx+1:])
 		if err == nil {
 			return strings.TrimSpace(query.Get("auth_index"))
 		}
@@ -28,16 +35,36 @@ func parseAuthIndexFromPath(rawPath string) string {
 	return ""
 }
 
-// handleModelsQuery 处理 GET /plugins/cursor-provider/models 请求，返回指定账号或全局可用模型。
-// [参数] ctx: 上下文；request: 管理请求对象，路径中可包含 auth_index 查询参数。
-// [返回] 统一响应对象，包含 models 列表 JSON；若上游获取失败则优雅降级为默认常用模型。
-// 最近修改时间 2026-10-11（新增面板测试弹窗模型选择列表查询支持）
-func (handler *Handler) handleModelsQuery(ctx context.Context, request managementRequest) (managementResponse, error) {
-	authIndex := parseAuthIndexFromPath(request.Path)
-	if authIndex == "" {
-		return managementJSON(http.StatusOK, map[string]any{"models": defaultCursorModels})
+// getFirstAvailableCredential 扫描当前所有已加载的 Cursor 认证文件，获取第一个可用凭据。
+// [参数] ctx: 上下文。
+// [返回] 账号索引、账号凭据及错误信息。
+// 最近修改时间 2026-10-11（未指定 auth_index 时自动优雅回退到首个可用账号发现模型）
+func (handler *Handler) getFirstAvailableCredential(ctx context.Context) (string, cursorauth.Credentials, error) {
+	files, err := handler.cursorAuthFiles(ctx)
+	if err != nil || len(files) == 0 {
+		return "", cursorauth.Credentials{}, fmt.Errorf("no cursor auth files: %w", err)
 	}
-	credential, err := handler.getCursorCredential(ctx, authIndex)
+	for _, file := range files {
+		if cred, err := handler.getCursorCredential(ctx, file.AuthIndex); err == nil && cred.AccessToken != "" {
+			return file.AuthIndex, cred, nil
+		}
+	}
+	return "", cursorauth.Credentials{}, errors.New("no valid cursor credentials found")
+}
+
+// handleModelsQuery 处理 GET /plugins/cursor-provider/models 请求，返回指定账号或全局可用模型。
+// [参数] ctx: 上下文；request: 管理请求对象，包含 Query 或 Path 参数。
+// [返回] 统一响应对象，包含 models 列表 JSON；若上游获取失败则优雅降级为默认常用模型。
+// 最近修改时间 2026-10-11（修复 Query 解析使账号真实发现模型列表正常返回）
+func (handler *Handler) handleModelsQuery(ctx context.Context, request managementRequest) (managementResponse, error) {
+	authIndex := parseAuthIndexFromRequest(request)
+	var credential cursorauth.Credentials
+	var err error
+	if authIndex != "" {
+		credential, err = handler.getCursorCredential(ctx, authIndex)
+	} else {
+		authIndex, credential, err = handler.getFirstAvailableCredential(ctx)
+	}
 	if err != nil {
 		return managementJSON(http.StatusOK, map[string]any{"models": defaultCursorModels})
 	}
@@ -81,7 +108,7 @@ func (handler *Handler) handleTestActive(ctx context.Context, body []byte) (mana
 // handleTestActiveWithAuth 使用指定凭据对 Cursor 上游执行真实轻量推理探活。
 // [参数] ctx: 上下文；credential: Cursor 认证凭据；authIndex: 账号索引；model: 指定模型名称（可为空）。
 // [返回] 管理接口响应体，包含测试往返结果与耗时。
-// 最近修改时间 2026-10-11（实现测试推理与 401 自动令牌刷新重试闭环）
+// 最近修改时间 2026-10-11（实现测试推理、别名归一化与 401 自动令牌刷新重试闭环）
 func (handler *Handler) handleTestActiveWithAuth(ctx context.Context, credential cursorauth.Credentials, authIndex, model string) (managementResponse, error) {
 	if handler.cursor == nil {
 		return managementJSON(http.StatusOK, map[string]any{
@@ -92,6 +119,8 @@ func (handler *Handler) handleTestActiveWithAuth(ctx context.Context, credential
 	chosenModel := strings.TrimSpace(model)
 	if chosenModel == "" {
 		chosenModel = pickDefaultCursorModel(credential)
+	} else {
+		chosenModel = openai.CanonicalModel(chosenModel)
 	}
 
 	start := time.Now()
@@ -175,19 +204,21 @@ func (handler *Handler) saveRefreshedCredential(ctx context.Context, authIndex s
 	return err
 }
 
-// pickDefaultCursorModel 从账号凭据中选取一个可用的默认模型（优先 auto）。
+// pickDefaultCursorModel 从账号凭据中选取一个可用的默认模型（优先 default/auto/常用高可用模型）。
 // [参数] credential: 账号凭据，包含已禁用的模型列表。
 // [返回] 选取的默认模型名称。
-// 最近修改时间 2026-10-11（新增默认测试模型选取逻辑）
+// 最近修改时间 2026-10-11（对齐官方 default 基准与常用推荐优先级）
 func pickDefaultCursorModel(credential cursorauth.Credentials) string {
 	disabled := normalizedModelSet(credential.DisabledModels)
-	if _, isBlocked := disabled["auto"]; !isBlocked {
-		return "auto"
+	for _, preferred := range []string{"default", "auto", "cursor-fast", "claude-3-5-sonnet", "gpt-4o"} {
+		if _, isBlocked := disabled[preferred]; !isBlocked {
+			return preferred
+		}
 	}
 	for _, m := range defaultCursorModels {
 		if _, isBlocked := disabled[m]; !isBlocked {
 			return m
 		}
 	}
-	return "auto"
+	return "default"
 }

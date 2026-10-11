@@ -83,12 +83,38 @@ type wireToolCall struct {
 	Function wireFunction `json:"function"`
 }
 
+// CanonicalModel 将客户端或测试端传入的模型别名归一化为 Cursor 上游支持的权威 ID。
+// [参数] model: 输入的原始模型标识（可带 cursor/ 前缀或版本别名）。
+// [返回] 归一化后的 Cursor 上游权威模型 ID。
+// 最近修改时间 2026-10-11（修复点号版本模型映射为连字符权威名称，避免上游 not_found）
+func CanonicalModel(model string) string {
+	m := strings.TrimPrefix(strings.TrimSpace(model), "cursor/")
+	switch strings.ToLower(m) {
+	case "claude-3.5-sonnet", "claude-3.5-sonnet-latest", "claude-3-5-sonnet-latest", "claude-3-5-sonnet-20241022", "sonnet-3.5", "sonnet-3-5":
+		return "claude-3-5-sonnet"
+	case "claude-3.5-haiku", "claude-3.5-haiku-latest", "claude-3-5-haiku-20241022", "haiku-3.5", "haiku-3-5":
+		return "claude-3-5-haiku"
+	case "claude-3.7-sonnet", "claude-3.7-sonnet-latest", "sonnet-3.7", "sonnet-3-7":
+		return "claude-3-7-sonnet"
+	case "claude-3.7-sonnet-thought", "claude-3.7-sonnet-thinking", "sonnet-3.7-thinking":
+		return "claude-3-7-sonnet-thought"
+	case "claude-3-opus", "claude-3.0-opus", "opus-3":
+		return "claude-3-opus"
+	case "gpt-4.5", "gpt-4-5":
+		return "gpt-4.5-preview"
+	case "cursor-small":
+		return "cursor-fast"
+	default:
+		return m
+	}
+}
+
 func ParseChatRequest(raw []byte) (ChatRequest, error) {
 	var wire wireChatRequest
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return ChatRequest{}, invalidRequest("decode OpenAI chat request: " + err.Error())
 	}
-	model := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(wire.Model), "cursor/"))
+	model := CanonicalModel(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(wire.Model), "cursor/")))
 	if model == "" || len(wire.Messages) == 0 {
 		return ChatRequest{}, invalidRequest("OpenAI chat request requires model and messages")
 	}

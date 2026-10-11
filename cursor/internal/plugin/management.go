@@ -37,10 +37,11 @@ type managementResource struct {
 }
 
 type managementRequest struct {
-	Method string      `json:"Method"`
-	Path   string      `json:"Path"`
-	Body   []byte      `json:"Body"`
-	Query  http.Header `json:"-"`
+	Method  string              `json:"Method"`
+	Path    string              `json:"Path"`
+	Body    []byte              `json:"Body"`
+	Headers http.Header         `json:"Headers"`
+	Query   map[string][]string `json:"Query"`
 }
 
 type managementResponse struct {

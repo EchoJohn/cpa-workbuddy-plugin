@@ -1,5 +1,18 @@
 # Cursor Provider Plugin Changelog
 
+## 0.1.4
+
+### Fix - 修复测试弹窗模型 Query 参数解析、DiscoverModels 真实模型展现与点号模型别名归一化（彻底修复上游 not_found）
+
+- 变更要点:
+  1. 修复管理路由 Query 参数解析与模型发现穿透：修正 `management.go` 中 `managementRequest` 结构体，将原本标记 `json:"-"` 的 `Query` 字段正确声明为 `Query map[string][]string json:"Query"`，并对齐宿主 RPC `pluginapi.ManagementRequest` 字段契约；重构 `parseAuthIndexFromRequest` 优先解析 Query 参数并向下兼容 Path query string；当未传 auth_index 时通过 `getFirstAvailableCredential` 自动命中首个可用账号发现模型，彻底解决管理接口 `/models` 永远回退到硬编码 `defaultCursorModels` 导致账号发现的 256 个真实模型被完全屏蔽的问题。
+  2. 建立模型别名归一化机制（根治上游 `not_found`）：新增 `openai.CanonicalModel`，将客户端或测试端传入的带点号版本名（如 `claude-3.5-sonnet`、`claude-3.5-haiku`、`claude-3.7-sonnet`、`gpt-4.5`）自动规范化映射为 Cursor 上游原生权威连字符模型 ID（如 `claude-3-5-sonnet`、`claude-3-5-haiku`、`claude-3-7-sonnet`、`gpt-4.5-preview`）；在 `handleTestActiveWithAuth` 与 `openai.ParseChatRequest` 中统一接入，彻底解决测试探活及实际转发请求时上游 Connect-RPC 报错 `Cursor stream failed: not_found` 的缺陷。
+  3. 优化兜底模型列表与默认推荐：更新 `defaultCursorModels` 剔除失效与重复的点号模型，补齐官方权威基准模型 `default`、`claude-3-5-sonnet` 与 `gpt-4.5-preview`；优化 `pickDefaultCursorModel` 优先推荐 `default`/`auto`。
+  4. 面板测试弹窗搜索过滤与秒开交互：在 `assets/management.html` 的测试弹窗中增加实时搜索过滤输入框，支持在 256 个海量模型中毫秒级模糊搜索（如输入 `claude`、`gpt`、`default`）；打开弹窗时优先使用当前账号已有缓存立即秒开渲染，并在后台异步校验刷新最新模型列表。
+  5. 自动化测试与必失败反证全绿：在 `management_test.go` 中新增宿主线协议标准 Query 参数传递与专属发现模型断言、点号模型别名测试探活断言；在 `model_identity_test.go` 中新增别名归一化单元测试；并通过必失败哨兵反证测试。
+- 验证: `python scripts/cgo-shim-build.py cursor` build/vet/test 全绿；必失败哨兵反证测试通过；`node test/cursor/panel_auto_entry_repro.mjs` 全部 100% PASS。
+- 涉及文件: cursor/VERSION、cursor/main.go、cursor/CHANGELOG.md、cursor/internal/plugin/management.go、cursor/internal/plugin/management_test_active.go、cursor/internal/plugin/models.go、cursor/internal/openai/request.go、cursor/internal/openai/model_identity_test.go、cursor/internal/plugin/management_test.go、cursor/internal/plugin/assets/management.html
+
 ## 0.1.3
 
 ### Fix - 消除侧边栏双菜单重复注册，全量对齐 WorkBuddy / ZCode 现代面板设计风格

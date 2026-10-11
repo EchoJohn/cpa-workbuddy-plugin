@@ -12,14 +12,14 @@ import (
 // defaultCursorModels 是 Cursor 官方主流支持的常用模型列表。
 // 当网络抖动或上游 GetUsableModels 暂时失败时作为稳定兜底，保障账号高可用。
 var defaultCursorModels = []string{
+	"default",
 	"auto",
 	"cursor-fast",
 	"composer-2.5",
-	"claude-3.5-sonnet",
 	"claude-3-5-sonnet",
 	"gpt-4o",
 	"gpt-4o-mini",
-	"gpt-5.3-codex",
+	"gpt-4.5-preview",
 	"deepseek-v3",
 }
 

@@ -552,14 +552,15 @@ func Test_Handler_Management_models_and_test_active_routes(t *testing.T) {
 	require.NoError(t, err)
 	host := &fakeHostCaller{credentialJSON: credentials}
 	handler := NewHandler(Dependencies{
-		Cursor: fakeModelCursorClient{models: []string{"auto", "cursor-fast"}},
+		Cursor: fakeModelCursorClient{models: []string{"auto", "discovered-special-model-999"}},
 		Host:   host,
 	})
 
-	// 1. 测试 /models 接口
+	// 1. 测试 /models 接口（支持宿主线协议标准 Query map 传参，且断言账号真实发现模型）
 	reqModels := managementRequest{
 		Method: "GET",
-		Path:   "/plugins/cursor-provider/models?auth_index=cursor-auth",
+		Path:   "/plugins/cursor-provider/models",
+		Query:  map[string][]string{"auth_index": {"cursor-auth"}},
 	}
 	rawReqModels, err := json.Marshal(reqModels)
 	require.NoError(t, err)
@@ -568,12 +569,26 @@ func Test_Handler_Management_models_and_test_active_routes(t *testing.T) {
 	resp, ok := respAny.(managementResponse)
 	require.True(t, ok)
 	require.Equal(t, 200, resp.StatusCode)
-	require.Contains(t, string(resp.Body), "auto")
+	require.Contains(t, string(resp.Body), "discovered-special-model-999")
 
-	// 2. 测试 /test-active 接口
+	// 1.1 测试 /models 接口向下兼容 URL Path 拼接 query string
+	reqModelsPath := managementRequest{
+		Method: "GET",
+		Path:   "/plugins/cursor-provider/models?auth_index=cursor-auth",
+	}
+	rawReqModelsPath, err := json.Marshal(reqModelsPath)
+	require.NoError(t, err)
+	respPathAny, err := handler.handleManagement(context.Background(), rawReqModelsPath)
+	require.NoError(t, err)
+	respPath, ok := respPathAny.(managementResponse)
+	require.True(t, ok)
+	require.Equal(t, 200, respPath.StatusCode)
+	require.Contains(t, string(respPath.Body), "discovered-special-model-999")
+
+	// 2. 测试 /test-active 接口（支持带点号模型别名归一化为上游权威连字符名）
 	bodyTestActive, err := json.Marshal(map[string]string{
 		"auth_index": "cursor-auth",
-		"model":      "auto",
+		"model":      "claude-3.5-sonnet",
 	})
 	require.NoError(t, err)
 	reqActive := managementRequest{
@@ -589,5 +604,5 @@ func Test_Handler_Management_models_and_test_active_routes(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 200, respActive.StatusCode)
 	require.Contains(t, string(respActive.Body), `"ok":true`)
-	require.Contains(t, string(respActive.Body), `"model":"auto"`)
+	require.Contains(t, string(respActive.Body), `"model":"claude-3-5-sonnet"`)
 }
