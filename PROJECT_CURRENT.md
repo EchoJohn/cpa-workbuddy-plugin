@@ -17,7 +17,7 @@
 ## 项目概况
 
 - 状态：活跃维护中。8 大插件全景全量编译与单测验证全绿（cgo-shim 零错误）。已彻底废除并删除 Gemini 插件（因依赖庞大导致二进制膨胀翻倍、GCP Project 门槛过高、缺乏调度与管理面板）。最新发布/就绪版本：
-  - `zcode-provider`: **0.1.8**（重构为 Z.ai 官方 CLI 轮询 OAuth 链路，根治 redirect_uri 白名单拒绝；授权地址改用服务端注册回调 `zcode.z.ai/api/v1/oauth/cli/callback/zai`，生产热重载验证通过）
+  - `zcode-provider`: **0.1.14**（重构统一用量管道接入宿主数据目录与测试探活记账、修复 ExecutorModelScopeOAuth 使 oauth-model-alias 生效、实现官方 GLM 大小写归一化、优化流式换号重试与 15s 退避冷却、修复额度刷新重复 force=1 与前端卡顿）
   - `cursor-provider`: **0.1.4**（修复 Query 参数反序列化丢失导致真实发现模型被屏蔽、建立点号模型别名归一化根治上游 not_found、测试弹窗支持实时搜索过滤与秒开交互）
   - `qoderwork-provider`: **0.9.29**（彻底移除凭据轮询中基于 hostAuthList 创建时间的 Panel-import 假成功代码，未授权绝不误报成功；模型推理请求终止契约与超时加固）
   - `qoder-ai-provider`: **0.1.8**（彻底移除凭据轮询中基于 hostAuthList 创建时间的 Panel-import 假成功代码，未授权绝不误报成功；模型推理请求终止契约与超时加固）
@@ -30,7 +30,29 @@
 
 ## 活动会话进展摘要
 
-- 当前会话（2026-10-12）：**Qoder / Qoder AI 移除自动探活全链路、完整下线 test_failed、签到收敛为 10:00/22:00（0.1.10 / 0.9.31，已提交发布）**：
+- 当前会话（2026-10-12）：**ZCode 0.1.14 全量修复用量管道、模型别名解析与额度刷新稳定性（全链路发布与生产热重载验收通过）**：
+  - 用户反馈与目标：
+    1. 「zcode测试成功, 但是token用量面板其实没有识别到请求, 是不是说明是请求推理失败的?」
+    2. 「但是我们用GLM-5.3是可以测试成功出请求记录的, 但是我们用glm-5.3就不行了。」
+    3. 「并且我们的ZCode 旅行者2435是有额度的, 有时候确刷新不出额度。」
+    4. 「zcode的差距需要全量测试一下, 还是有很多问题的。」
+  - 核心根因锁定（实测铁证）：
+    1. **用量面板无记录**：`usage_feed.go` 将日志写到孤立路径 `/root/.antigravity_cockpit/data/` 且 JSON 缺少 `tokens` 嵌套与 `source` 账号标签，未被 `token-usage-tracker` 消费；面板 `/test-active` 未接入上报。
+    2. **小写模型名与别名 400 失败**：`main.go` 误声明 `ExecutorModelScopeStatic` 导致宿主 OAuth 模型别名完全未绑定到插件；且插件内部缺失 `cacheModelAliases` / `resolveUpstreamModel`，未将小写 `glm-5.3` 归一化为上游 Anthropic 端点识别的权威大写 `GLM-5.3`。
+    3. **额度刷新频控与卡顿**：前端后台轮询收尾时二次调用 `fetchAndPatchQuota` 带有 `&force=1` 重复轰炸上游频控；后端缺少旧有效快照兜底；未获取时永久转圈假死。
+  - 实施修复与系统实现（v0.1.14）：
+    1. **重写用量流管道**：自动探测宿主数据目录 `<CLIProxyAPI root>/data/token-usage-feed.ndjson`，对齐完整嵌套 Schema、账号昵称 `source` 与 128MB 截断；在 `/test-active` 探活成功/失败时完整埋点。
+    2. **模型别名反向解析与 GLM 大小写归一化**：`main.go` 改为 `ExecutorModelScopeOAuth`；`models.go` 接入 `cacheModelAliases` / `resolveUpstreamModel`；实现 `normalizeOfficialGLMModelID` 自动将 `glm-` 开头的小写模型规范化为官方标准大写；`MethodModelForAuth` 自动剥离 `.json` 后缀并从生效套餐 entitlements 动态发现模型。
+    3. **优化流式换号重试与退避**：`handleExecStream` 增加 3 次换号重试；换号判据纳入并发超限（`3009/concurrency`）；退避冷却优化为 15 秒固定冷却。
+    4. **额度刷新稳定性**：前端轮询收尾改为读取缓存；`quota.go` 增加旧缓存兜底；OAuth 落盘与导入后自动加入刷新队列；优化前端空态提示。
+  - 门禁与发布验收：
+    - `python scripts/cgo-shim-build.py zcode` 与 `token-usage-tracker` 全部 all green，新增 `models_alias_test.go` 并经受必失败哨兵反证；`node` 前端语法检测全绿；
+    - CI Run `38271303121` 65/65 jobs 全绿，生成 Release 资产；下载 8 资产校验 `ALL CHECKSUMS OK`；registry 同步并通过校验；远端 raw URL 7/7 平台 200 且哈希一致；prune 0.1.13；
+    - 生产服务器调用 `plugin-store install zcode-provider?version=0.1.14` 热重载生效（`restart_required: false`，零容器重启）；
+    - **生产全链路实测验收通过**：
+      1. 面板探活「ZCode 旅行者2435」返回 200，用量日志与 Token 用量统计面板 `/requests` 立刻出现 `Source: ZCode 旅行者2435, Model: GLM-5.3` 真实记录；
+      2. 生产网关 `/v1/models` 成功注册 `glm-5.3` 与 `glm-5.3-flash` 归属 `zcode-provider`；请求小写 `glm-5.3` 和 `glm-5.3-flash` 稳定以流式打字机吐出思考链并返回 200；
+      3. `GET /credits` 成功拉取「ZCode 旅行者2435」每日 800 万额度（GLM-5.3 300万 + GLM-5.3-Flash 500万），`POST /refresh` 2 秒内全部 `done`，首屏 accounts 自动附带完整 quota。
   - 核心根因：上游对**同账号突发调用**限流，在 HTTP 200 下返回业务码 `110: Billing daily count exceeded`。自动探活每轮 5 模型轮测 + 每账号 10 分钟节流，一天上千次真实推理调用稳定触发限流，并挤占真实推理的账号配额。（**修正上一轮“日配额耗尽”误判**：实测健康账号连发 20/20 成功、同账号 ok/bad 交替，属突发限流而非日额度打满。）
   - 实施落地（两插件镜像，逐函数适配）：
     1. **移除自动探活全链路**：删除 `doActivePing`（多模型轮测）、`triggerActivePing`、30 分钟节流状态、`refresh_runner.doFetchOne` 触发点与 watchdog 探活语义；后台只拉取额度快照与活动状态。**保留面板「测试」按钮的单次手动调用**（用户主动点击才发 1 次）。
