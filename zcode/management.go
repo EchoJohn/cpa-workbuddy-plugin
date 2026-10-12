@@ -68,7 +68,7 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: base + "/disable-all", Description: "Disable all ZCode accounts."},
 			{Method: http.MethodGet, Path: base + "/models", Description: "List models available for one account."},
 			{Method: http.MethodPost, Path: base + "/test-active", Description: "Send an active ping chat inference request for one account."},
-			{Method: http.MethodGet, Path: base + "/quota", Description: "Query plan quota for one account or all accounts."},
+			{Method: http.MethodGet, Path: base + "/credits", Description: "Query plan quota for one account or all accounts."},
 			{Method: http.MethodPost, Path: base + "/refresh", Description: "Start a background quota refresh round for all accounts."},
 			{Method: http.MethodGet, Path: base + "/refresh/status", Description: "Read background quota refresh progress."},
 		},
@@ -211,7 +211,7 @@ func handleManagement(raw []byte) ([]byte, error) {
 		}
 		return makeHTTPResponse(http.StatusOK, data)
 
-	case method == http.MethodGet && subPath == "/quota":
+	case method == http.MethodGet && subPath == "/credits":
 		authID := getQueryParam("auth_index")
 		if authID == "" {
 			authID = getQueryParam("auth_id")

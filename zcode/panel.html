@@ -761,7 +761,7 @@ function pollRefreshStatus(){
 }
 // 拉取单账号额度并合并进本地态 + 局部重绘（不 toast、不 busy）。
 async function fetchAndPatchQuota(authID, opts={}){
-  const d=await api(`/quota?auth_index=${encodeURIComponent(authID)}&force=1`, opts);
+  const d=await api(`/credits?auth_index=${encodeURIComponent(authID)}&force=1`, opts);
   const acct=(d.accounts||[])[0]||{};
   if(d.error||acct.error) throw new Error(d.error||acct.error||"未知错误");
   const a=(lastAccounts||[]).find(x=>x.auth_id===authID);

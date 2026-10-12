@@ -1,12 +1,18 @@
 # Changelog
 
+## [0.1.13] - 2026-10-12
+
+### Fixed
+- **额度查询端点路径改为 `/credits`**：0.1.12 注册的 `GET /quota` 与宿主 CPA 自身的保留额度路由冲突，生产实测被宿主层拦截并返回 `{"error":"auth_index is required"}`，导致面板额度始终拉不到。改用 `/credits`（与 workbuddy 同类端点命名一致），生产热重载后 `/credits`、`POST /refresh`、`GET /refresh/status` 全部返回 200，额度正常展示。
+
 ## [0.1.12] - 2026-10-12
 
 ### Added
 - **账号面板额度可视化（参照 workbuddy 面板重设计）**：此前 zcode 面板只有账号状态，缺少 workbuddy 那样的额度进度条与用量汇总，两者观感差距明显。
   - 新增 `quota.go`：调用 `GET https://zcode.z.ai/api/v1/zcode-plan/billing/current` 解析当前计划的 entitlements（各模型每日授予额度 `grant_units`），带 5 分钟进程内缓存与显式失效。该端点是唯一可靠的额度来源——`billing/balance`（余额/已用）在免费 start-plan 账号上固定返回 `400 code 3001`，故不采用。
   - 新增 `refresh_runner.go`：后台批量额度刷新器（幂等、逐账号进度、串行节流），暴露 `GET /refresh/status` 只读快照供前端轮询。
-  - 新增管理端点：`GET /quota`（单账号或全量额度，支持 `force=1` 绕过缓存）、`POST /refresh`（启动后台刷新轮）、`GET /refresh/status`（读取进度）。
+  - 新增管理端点：`GET /credits`（单账号或全量额度，支持 `force=1` 绕过缓存）、`POST /refresh`（启动后台刷新轮）、`GET /refresh/status`（读取进度）。
+    > 路径用 `/credits` 而非 `/quota`：`/quota` 是宿主 CPA 自身的保留额度路由，插件注册该路径会被宿主拦截（实测返回宿主层 `{"error":"auth_index is required"}`），与 workbuddy 的同类端点命名保持一致。
   - `GET /accounts` 附带已缓存额度快照（`quota` 字段），面板首屏即可展示；无缓存时由进入页面自动触发的后台刷新补齐。
 - **面板功能对齐 workbuddy**：
   - 账号卡新增每日额度进度条（按 entitlement 展示模型名 + 授予额度 + 周期）与计划名徽章。
