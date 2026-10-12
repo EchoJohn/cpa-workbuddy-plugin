@@ -1,5 +1,15 @@
 # WorkBuddy AI Plugin Changelog
 
+## 0.1.12
+
+### Feat & Fix - 设立安全缓冲额度红线 (minRoutableCredits=20)、健康平摊轮询与换号过滤
+
+- 变更要点:
+  1. 设立安全缓冲额度红线 (`min_routable_credits`，默认 20，可配置)：剩余额度 `< 20` 的账号视为低额保护态，不再分配新推理流量。
+  2. 调度策略逆转：废除残血优先（Low-Credit-First）升序排序，在 `scheduler.pick` 初筛中硬排除低额与耗尽账号，存活健康候选平摊轮询（Round-Robin）。
+  3. 请求内换号链过滤：`pickNextAuth` 跳过 `remain < min_routable_credits` 账号；`hardCreditMarkers` 补齐 `exceeded the quota` 与 `14018` 触发换号重试。
+  4. 面板状态与视觉对齐：新增 `low_credits` 字段与「低额保护」黄色徽标展示。
+
 ## 0.1.11
 
 ### Feat - 补齐 checkin_auto 配置声明与全套路由与基础设施回归单测
