@@ -14,6 +14,18 @@ type ModelOfficialSpec struct {
 
 // 常见主流模型的权威官方规格表（对齐宿主 models.json 与各厂商权威文档）。
 var officialModelSpecs = map[string]ModelOfficialSpec{
+	// Qoder/阿里上游代号别名
+	"qfmodel":       {ContextWindow: 1000000, MaxOutputTokens: 16384, ReasoningMax: 32768},
+	"qmodel_38max": {ContextWindow: 1000000, MaxOutputTokens: 16384, ReasoningMax: 32768},
+	"qmodel_latest":{ContextWindow: 1000000, MaxOutputTokens: 16384, ReasoningMax: 32768},
+	"qmodel":       {ContextWindow: 1000000, MaxOutputTokens: 16384, ReasoningMax: 32768},
+	"cmodel":       {ContextWindow: 1000000, MaxOutputTokens: 16384, ReasoningMax: 32768},
+	"gmodel":       {ContextWindow: 1048576, MaxOutputTokens: 16384, ReasoningMax: 128000},
+	"gfmodel":      {ContextWindow: 1048576, MaxOutputTokens: 16384, ReasoningMax: 128000},
+	"dmodel":       {ContextWindow: 1048576, MaxOutputTokens: 16384, ReasoningMax: 64000},
+	"dfmodel":      {ContextWindow: 1048576, MaxOutputTokens: 16384, ReasoningMax: 64000},
+	"mmodel":       {ContextWindow: 1000000, MaxOutputTokens: 16384, ReasoningMax: 32768},
+
 	// DeepSeek 家族：推理模式官方支持深度长思考
 	"deepseek-v4.1-flash": {ContextWindow: 1048576, MaxOutputTokens: 16384, ReasoningMax: 64000},
 	"deepseek-v4-flash":   {ContextWindow: 1048576, MaxOutputTokens: 16384, ReasoningMax: 64000},
@@ -76,28 +88,34 @@ var officialModelSpecs = map[string]ModelOfficialSpec{
 	"hy3": {ContextWindow: 1000000, MaxOutputTokens: 16384, ReasoningMax: 32768},
 }
 
-// resolveOfficialModelSpec 根据模型名称解析其官方规格，支持大小写归一化、前缀剥离与模糊家族匹配。
-// [参数] model: 模型 ID 或展示名
-// [返回] 匹配到的官方规格；未收录时返回通用兜底规格
-// 最近修改时间：2026-10-13 02:00:00；改动原因：按模型官方规格自适应。
-func resolveOfficialModelSpec(model string) ModelOfficialSpec {
+// lookupOfficialModelSpec 查找模型官方规格，第二个返回值指示是否命中已知官方规则库。
+func lookupOfficialModelSpec(model string) (ModelOfficialSpec, bool) {
 	norm := strings.ToLower(strings.TrimSpace(model))
 	if idx := strings.Index(norm, "/"); idx >= 0 {
 		norm = norm[idx+1:]
 	}
 	if spec, ok := officialModelSpecs[norm]; ok {
-		return spec
+		return spec, true
 	}
 	for k, spec := range officialModelSpecs {
 		if strings.HasPrefix(norm, k) || strings.HasPrefix(k, norm) {
-			return spec
+			return spec, true
 		}
 	}
 	return ModelOfficialSpec{
 		ContextWindow:   131072,
 		MaxOutputTokens: 8192,
-		ReasoningMax:    32768,
-	}
+		ReasoningMax:    8192,
+	}, false
+}
+
+// resolveOfficialModelSpec 根据模型名称解析其官方规格，支持大小写归一化、前缀剥离与模糊家族匹配。
+// [参数] model: 模型 ID 或展示名
+// [返回] 匹配到的官方规格；未收录时返回通用兜底规格
+// 最近修改时间：2026-10-13 02:00:00；改动原因：按模型官方规格自适应。
+func resolveOfficialModelSpec(model string) ModelOfficialSpec {
+	spec, _ := lookupOfficialModelSpec(model)
+	return spec
 }
 
 // computeAdaptiveMaxTokens 根据模型官方规格和推理模式，自适应计算发往上游的最佳 max_tokens。
