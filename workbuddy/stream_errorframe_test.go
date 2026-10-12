@@ -56,7 +56,9 @@ func TestShouldRotateOnUpstreamErr(t *testing.T) {
 		{"200 rate-limit frame rotates", 200, "upstream 200: rate limit exceeded", true},
 		// workbuddy 的 hardCreditMarkers 是精确短语体系（quota exceeded 等），
 		// traework 式宽文案 "exceeded the quota" 不命中属预期保守行为（不误换号）。
-		{"200 unmarked frame does not rotate", 200, "upstream 200: Your requests have exceeded the quota.", false},
+					// 14018 与 exceeded the quota 已纳入 hardCreditMarkers，触发换号重试。
+			{"200 exceeded the quota frame rotates", 200, "upstream 200: Your requests have exceeded the quota.", true},
+			{"200 code 14018 frame rotates", 200, "upstream 200: 14018: quota limit reached", true},
 		{"200 unknown frame does not rotate", 200, "upstream 200: invalid message format", false},
 		{"500 stays cooldown-only", 500, "internal error", false},
 		{"0 transport stays cooldown-only", 0, "http_error: dial tcp", false},

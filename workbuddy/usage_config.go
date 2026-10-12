@@ -70,6 +70,7 @@ func configure(raw []byte) {
 	// failover default: enabled. Explicit account_failover: false disables the
 	// whole cooldown mechanism (pre-failover behavior).
 	nextFailoverEnabled := true
+	nextMinRoutableCredits := defaultMinRoutableCredits
 
 	// retry_on_4xx: per-request account-failover budget. Applied ONLY when
 	// the key is present in config_yaml: a valid value is clamped to
@@ -128,6 +129,13 @@ func configure(raw []byte) {
 					v = strings.Trim(v, "\"'")
 					nextKeepaliveAuto = v == "true" || v == "1" || v == "yes" || v == "on"
 				}
+				if strings.HasPrefix(line, "min_routable_credits:") {
+					v := strings.TrimSpace(strings.TrimPrefix(line, "min_routable_credits:"))
+					v = strings.Trim(v, "\"'")
+					if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+						nextMinRoutableCredits = n
+					}
+				}
 			if strings.HasPrefix(line, "retry_on_4xx:") {
 				retryOn4xxSeen = true
 				if n, ok := parseRetryOn4xxLine(line); ok {
@@ -176,6 +184,10 @@ func configure(raw []byte) {
 	keepaliveAutoMu.Lock()
 	keepaliveAuto = nextKeepaliveAuto
 	keepaliveAutoMu.Unlock()
+
+	minRoutableCreditsMu.Lock()
+	minRoutableCredits = nextMinRoutableCredits
+	minRoutableCreditsMu.Unlock()
 
 	// management key: config_yaml > env > keep existing. Empty stays empty
 	// (plugin-layer auth disabled, host middleware still guards).

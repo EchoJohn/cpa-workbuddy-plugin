@@ -25,6 +25,7 @@ type wbAccount struct {
 	CreatedAt    string          `json:"created_at,omitempty"`
 	Disabled     bool            `json:"disabled"`
 	Exhausted    bool            `json:"exhausted"`
+	LowCredits   bool            `json:"low_credits"` // 剩余额度低于安全红线(min_routable_credits)
 	Selected     bool            `json:"selected"`
 	TestFailed   bool            `json:"test_failed"`
 	Credits      *creditsSummary `json:"credits,omitempty"`
@@ -110,6 +111,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 				acct.Checkin = ci
 				acct.Credits = cr
 				acct.Exhausted = isCreditsExhausted(cr)
+				acct.LowCredits = cr != nil && !acct.Exhausted && cr.TotalRemain < loadedMinRoutableCredits()
 				acct.TrialClaimed = hasTrialPack(cr)
 				_ = syncAuthNote(f.AuthIndex, f.ID, sa, cr, acct.Disabled)
 				acct.Error = strings.Join(errs, "; ")
@@ -120,6 +122,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 						acct.Checkin = e.checkin
 						acct.Credits = e.credits
 						acct.Exhausted = isCreditsExhausted(e.credits)
+						acct.LowCredits = e.credits != nil && !acct.Exhausted && e.credits.TotalRemain < loadedMinRoutableCredits()
 						acct.TrialClaimed = hasTrialPack(e.credits)
 					}
 				}

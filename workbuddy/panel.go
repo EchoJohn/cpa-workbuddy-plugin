@@ -25,6 +25,7 @@ type wbAccount struct {
 	CreatedAt    string          `json:"created_at,omitempty"` // account creation time (RFC3339), from JWT auth_time
 	Disabled     bool            `json:"disabled"`
 	Exhausted    bool            `json:"exhausted"`
+	LowCredits   bool            `json:"low_credits"` // 剩余额度低于安全红线(min_routable_credits)
 	Selected     bool            `json:"selected"`    // panel active routing card
 	TestFailed   bool            `json:"test_failed"` // scheduled active-ping failed while credits remained
 	Credits      *creditsSummary `json:"credits,omitempty"`
@@ -134,6 +135,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 				acct.Checkin = ci
 				acct.Credits = cr
 				acct.Exhausted = isCreditsExhausted(cr)
+				acct.LowCredits = cr != nil && !acct.Exhausted && cr.TotalRemain < loadedMinRoutableCredits()
 				if isGlobalDomain(sa.Auth.Domain) {
 					acct.TrialClaimed = hasTrialPack(cr)
 				}
@@ -148,6 +150,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 						acct.Checkin = e.checkin
 						acct.Credits = e.credits
 						acct.Exhausted = isCreditsExhausted(e.credits)
+						acct.LowCredits = e.credits != nil && !acct.Exhausted && e.credits.TotalRemain < loadedMinRoutableCredits()
 						if isGlobalDomain(sa.Auth.Domain) {
 							acct.TrialClaimed = hasTrialPack(e.credits)
 						}

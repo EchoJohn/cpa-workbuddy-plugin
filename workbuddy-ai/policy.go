@@ -63,6 +63,8 @@ var hardCreditMarkers = []string{
 	"out of credits",
 	"quota exceeded",
 	"quota exhaust",
+	"exceeded the quota",
+	"14018",
 	"payment required",
 	"点数不足",
 	"额度不足",
@@ -72,6 +74,46 @@ var hardCreditMarkers = []string{
 	"没有积分",
 	"credit not enough",
 	"not enough credit",
+}
+
+// defaultMinRoutableCredits 是安全缓冲额度红线默认值（20 点）。
+// 剩余额度低于该阈值的账号不再承载新请求，防止推理中途断开。
+const defaultMinRoutableCredits int64 = 20
+
+var (
+	minRoutableCredits   int64 = defaultMinRoutableCredits
+	minRoutableCreditsMu sync.RWMutex
+)
+
+// loadedMinRoutableCredits 返回当前生效的安全缓冲额度红线。
+func loadedMinRoutableCredits() int64 {
+	minRoutableCreditsMu.RLock()
+	defer minRoutableCreditsMu.RUnlock()
+	return minRoutableCredits
+}
+
+// setMinRoutableCredits 设置安全缓冲额度红线并返回清理函数，供单测或动态配置使用。
+func setMinRoutableCredits(n int64) func() {
+	minRoutableCreditsMu.Lock()
+	old := minRoutableCredits
+	minRoutableCredits = n
+	minRoutableCreditsMu.Unlock()
+	return func() {
+		minRoutableCreditsMu.Lock()
+		minRoutableCredits = old
+		minRoutableCreditsMu.Unlock()
+	}
+}
+
+// isCreditsLowOrExhausted 判定账号是否额度耗尽或已低于安全缓冲额度红线。
+func isCreditsLowOrExhausted(cr *creditsSummary) bool {
+	if cr == nil {
+		return false
+	}
+	if isCreditsExhausted(cr) {
+		return true
+	}
+	return cr.TotalRemain < loadedMinRoutableCredits()
 }
 
 const httpStatusPaymentRequired = 402

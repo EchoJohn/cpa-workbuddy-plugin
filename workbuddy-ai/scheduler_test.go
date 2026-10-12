@@ -102,7 +102,7 @@ func TestSchedulerPick_SingleCandidate_PicksIt(t *testing.T) {
 
 func TestSchedulerPick_PrefersLowCreditOverHighCredit(t *testing.T) {
 	resetActiveAuth(t)
-	accountCache.Store("wbai-a", &accountCacheEntry{credits: &creditsSummary{TotalRemain: 10, TotalSize: 10}})
+	accountCache.Store("wbai-a", &accountCacheEntry{credits: &creditsSummary{TotalRemain: 10, TotalUsed: 90, TotalSize: 100}})
 	accountCache.Store("wbai-b", &accountCacheEntry{credits: &creditsSummary{TotalRemain: 500, TotalSize: 500}})
 	defer func() {
 		accountCache.Delete("wbai-a")
@@ -120,8 +120,9 @@ func TestSchedulerPick_PrefersLowCreditOverHighCredit(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	resp := parsePickResponse(t, raw)
-	if !resp.Handled || resp.AuthID != "wbai-a" {
-		t.Fatalf("want low-credit account wbai-a routed first, got %+v", resp)
+	// wbai-a (remain=10 < minRoutableCredits=20) 被低额安全红线硬排除，自动切换到健康的 wbai-b (500)
+	if !resp.Handled || resp.AuthID != "wbai-b" {
+		t.Fatalf("want low-credit account wbai-a (<20) excluded and wbai-b routed, got %+v", resp)
 	}
 }
 

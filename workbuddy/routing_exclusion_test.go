@@ -94,7 +94,7 @@ func TestSchedulerPick_LowCreditFirstAndUnknownLast(t *testing.T) {
 	resetTestFailed(t)
 	resetFailover(t)
 	storeCredits(t, "wb-mid", 300, 0, 300)
-	storeCredits(t, "wb-low", 12, 0, 300)
+	storeCredits(t, "wb-low", 12, 288, 300)
 	accountCache.Store("wb-unknown", &accountCacheEntry{})
 	defer accountCache.Delete("wb-unknown")
 	raw, err := handleSchedulerPick(mustMarshal(t, pluginapi.SchedulerPickRequest{
@@ -109,8 +109,9 @@ func TestSchedulerPick_LowCreditFirstAndUnknownLast(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	resp := parsePickResponse(t, raw)
-	if !resp.Handled || resp.AuthID != "wb-low" {
-		t.Fatalf("want lowest-credit wb-low routed first, got %+v", resp)
+	// wb-low (12 < 20) 低于安全红线被硬排除，wb-mid (300) 排在 wb-unknown (-1) 之前被选中
+	if !resp.Handled || resp.AuthID != "wb-mid" {
+		t.Fatalf("want healthy wb-mid routed (wb-low < 20 excluded), got %+v", resp)
 	}
 }
 

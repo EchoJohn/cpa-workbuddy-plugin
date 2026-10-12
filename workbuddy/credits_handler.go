@@ -392,6 +392,7 @@ func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
 			} else {
 				acct["credits"] = cr
 				acct["exhausted"] = isCreditsExhausted(cr)
+				acct["low_credits"] = cr != nil && !isCreditsExhausted(cr) && cr.TotalRemain < loadedMinRoutableCredits()
 				if isGlobalDomain(sa.Auth.Domain) {
 					acct["trial_claimed"] = hasTrialPack(cr)
 				}

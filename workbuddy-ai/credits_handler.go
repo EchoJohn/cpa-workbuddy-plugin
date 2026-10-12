@@ -334,6 +334,7 @@ func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
 			} else {
 				acct["credits"] = cr
 				acct["exhausted"] = isCreditsExhausted(cr)
+				acct["low_credits"] = cr != nil && !isCreditsExhausted(cr) && cr.TotalRemain < loadedMinRoutableCredits()
 				acct["trial_claimed"] = hasTrialPack(cr)
 				acct["plan"] = fetchPaymentType(sa)
 				if v, ok := accountCache.Load(f.ID); ok {
