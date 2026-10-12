@@ -61,6 +61,46 @@ func Test_Handler_static_models_omit_unverified_token_limits(t *testing.T) {
 	}
 }
 
+func Test_Handler_static_models_discovers_models_from_available_credential(t *testing.T) {
+	// 模拟已导入凭据
+	credentials, err := cursorauth.MarshalCredentials(cursorauth.Credentials{
+		AccessToken:  "valid-access-token",
+		RefreshToken: "refresh-token",
+		Type:         "cursor-provider",
+	})
+	require.NoError(t, err)
+
+	host := &fakeHostCaller{
+		credentialJSON: credentials,
+		listJSON: json.RawMessage(`{"files":[{
+			"id":"cursor-acc-1",
+			"auth_index":"cursor-auth-index-1",
+			"name":"cursor-acc-1.json",
+			"type":"cursor-provider"
+		}]}`),
+	}
+	client := fakeModelCursorClient{models: []string{"custom-model-1", "custom-model-2"}}
+	handler := NewHandler(Dependencies{Cursor: client, Host: host})
+
+	raw, ok := handler.CallWithStatus(context.Background(), "model.static", nil)
+	require.True(t, ok)
+
+	var response struct {
+		Result struct {
+			Provider string
+			Models   []struct {
+				ID          string
+				DisplayName string
+			}
+		}
+	}
+	require.NoError(t, json.Unmarshal(raw, &response))
+	require.Equal(t, "cursor-provider", response.Result.Provider)
+	require.Len(t, response.Result.Models, 2)
+	require.Equal(t, "cursor/custom-model-1", response.Result.Models[0].ID)
+	require.Equal(t, "cursor/custom-model-2", response.Result.Models[1].ID)
+}
+
 type fakeModelCursorClient struct {
 	models []string
 }

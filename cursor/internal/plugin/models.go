@@ -16,11 +16,21 @@ var defaultCursorModels = []string{
 	"auto",
 	"cursor-fast",
 	"composer-2.5",
+	"claude-3-7-sonnet",
+	"claude-3-7-sonnet-thought",
 	"claude-3-5-sonnet",
+	"claude-3-5-haiku",
+	"claude-3-opus",
 	"gpt-4o",
 	"gpt-4o-mini",
 	"gpt-4.5-preview",
+	"o3-mini",
+	"o1",
+	"o1-mini",
 	"deepseek-v3",
+	"deepseek-r1",
+	"gemini-2.5-pro",
+	"gemini-2.5-flash",
 }
 
 type authModelRequest struct {
@@ -64,6 +74,23 @@ func (handler *Handler) modelsForAuth(ctx context.Context, raw []byte) (any, err
 		}
 	}
 	return modelResponse(filterDisabledModels(models, credentials.DisabledModels), contexts), nil
+}
+
+// staticModels 获取全局静态模型列表，供宿主 model.static 调用。
+// [参数] ctx: 上下文。
+// [返回] 格式化后的模型列表响应；优先尝试通过首个有效凭据发现上游最新模型，失败或无凭据时优雅回退到默认常用模型。
+// 最近修改时间 2026-10-13（支持动态凭据探测与常用模型保底返回，配合 both 作用域解决管理台无法获取模型列表问题）
+func (handler *Handler) staticModels(ctx context.Context) any {
+	var models []string
+	if handler.cursor != nil {
+		if _, cred, err := handler.getFirstAvailableCredential(ctx); err == nil && cred.AccessToken != "" {
+			models, _ = handler.cursor.DiscoverModels(ctx, cred.AccessToken)
+		}
+	}
+	if len(models) == 0 {
+		models = append([]string(nil), defaultCursorModels...)
+	}
+	return modelResponse(models, nil)
 }
 
 func filterDisabledModels(models, disabled []string) []string {

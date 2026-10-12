@@ -103,7 +103,7 @@ func (handler *Handler) dispatch(ctx context.Context, method string, request []b
 	case "auth.refresh":
 		return handler.refreshAuth(ctx, request)
 	case "model.static":
-		return modelResponse(defaultCursorModels, nil), nil
+		return handler.staticModels(ctx), nil
 	case "model.for_auth":
 		return handler.modelsForAuth(ctx, request)
 	case "executor.execute":
@@ -138,7 +138,7 @@ func registration() map[string]any {
 			"request_lifecycle_plugin": true,
 			"usage_plugin":             false,
 			"executor":                 true,
-			"executor_model_scope":     "oauth",
+			"executor_model_scope":     "both",
 			"executor_input_formats":   []string{"chat-completions"},
 			"executor_output_formats":  []string{"chat-completions"},
 		},

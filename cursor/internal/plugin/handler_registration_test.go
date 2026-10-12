@@ -22,6 +22,7 @@ func Test_Handler_Register_declares_cursor_auth_models_and_executor(t *testing.T
 	require.Contains(t, string(response.Result), `"auth_provider":true`)
 	require.Contains(t, string(response.Result), `"model_provider":true`)
 	require.Contains(t, string(response.Result), `"executor":true`)
+	require.Contains(t, string(response.Result), `"executor_model_scope":"both"`)
 	require.Contains(t, string(response.Result), `"management_api":true`)
 	require.Contains(t, string(response.Result), `"usage_plugin":false`)
 	require.Contains(t, string(response.Result), `"request_interceptor":true`)

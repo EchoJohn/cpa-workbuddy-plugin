@@ -1,5 +1,17 @@
 # Cursor Provider Plugin Changelog
 
+## 0.1.6
+
+### Fix - 支持向 CPA 宿主返回全局模型列表（executor_model_scope 升级为 both，补齐 model.static 动态与保底发现）
+
+- 变更要点:
+  1. 根因修复：`registration` 中声明的 `executor_model_scope` 原为 `"oauth"`，导致 CPA 宿主启动与重配时判定 `executorScopeAllowsStaticModels` 为假并直接跳过该插件的静态模型加载，造成管理台请求 `/v8/management/routing/model-definitions/cursor-provider` 报 400 提示“无法获取模型列表”。现将作用域升级为 `"both"`，打通宿主全局模型目录挂载链路。
+  2. 补齐 `model.static` 统一处理：新增 `Handler.staticModels`，优先通过首个可用凭据探测上游最新可用模型，无凭据或网络异常时优雅回退到主流常用模型列表，保证静态管理台下拉秒开与模型选取。
+  3. 扩充常用主流模型列表：在 `defaultCursorModels` 中补充 `claude-3-7-sonnet`、`claude-3-7-sonnet-thought`、`claude-3-5-haiku`、`claude-3-opus`、`o3-mini`、`o1`、`deepseek-r1`、`gemini-2.5-pro`、`gemini-2.5-flash` 等官方主流模型。
+  4. 单元测试与验证覆盖：在 `handler_registration_test.go` 中断言 `executor_model_scope: both`，在 `models_test.go` 中补充 `Test_Handler_static_models_discovers_models_from_available_credential` 覆盖，并通过必失败哨兵反证测试。
+- 验证: `python scripts/cgo-shim-build.py cursor` build/vet/test 全绿；必失败哨兵反证拦截通过。
+- 涉及文件: cursor/VERSION、cursor/main.go、cursor/CHANGELOG.md、cursor/internal/plugin/handler.go、cursor/internal/plugin/models.go、cursor/internal/plugin/handler_registration_test.go、cursor/internal/plugin/models_test.go
+
 ## 0.1.5
 
 ### Perf - 测试探活（/test-active）改为流式首包即停，消除思考模型整段思维链等待
