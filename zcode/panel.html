@@ -170,6 +170,8 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 .import-result.show{display:block}
 .import-result .r-hd{font-weight:600;margin-bottom:6px}
 .import-result .r-hd.ok{color:var(--ok)}.import-result .r-hd.err{color:var(--err)}
+.spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--acc);border-radius:50%;animation:spin 1s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 <script>
 /* Early theme sync (before body paint): mirror CPA parent data-theme when
@@ -301,6 +303,33 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
     </div>
     <div class="modal-ft">
       <button type="button" class="sec" onclick="closeTestModal()">关闭</button>
+    </div>
+  </div>
+</div>
+<div class="modal-mask" id="activateModal" onclick="onActivateMaskClick(event)">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="activateModalTitle">
+    <div class="modal-hd">
+      <h2 id="activateModalTitle">⚡ 官方授权激活 Start Plan</h2>
+      <button type="button" class="modal-x" onclick="closeActivateModal()" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-bd">
+      <p class="hint" id="activateModalHint">正在连接 Z.ai 官方完成授权激活…</p>
+      <div id="activateModalBody" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;margin:14px 0;line-height:1.6;font-size:13px;color:var(--mut);">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+          <div class="spinner"></div>
+          <strong id="activateStatusText" style="color:var(--fg);font-size:14px;">已打开官方授权页面，等待授权完成…</strong>
+        </div>
+        <p style="margin:0 0 10px;">请在弹出的 Z.ai 官方页面中点击「同意授权」完成开通；授权完成后插件会自动捕获并下发每日 800 万额度。</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <a class="btn sec" id="activateExternalLink" href="#" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;padding:6px 14px;border-radius:6px;font-size:12px;">
+            <span>打开官方授权页 ↗</span>
+          </a>
+        </div>
+      </div>
+      <p class="hint" style="color:var(--mut);font-size:12px;margin:0;">提示：无需安装或打开 ZCode 桌面客户端软件，在网页端授权即可获得完整每日额度。</p>
+    </div>
+    <div class="modal-ft">
+      <button type="button" class="sec" onclick="closeActivateModal()">取消</button>
     </div>
   </div>
 </div>
@@ -798,112 +827,140 @@ async function refreshQuota(authID, btn){
   try{
     const acct=await fetchAndPatchQuota(authID, {}, true);
     if(!acct.quota || !Array.isArray(acct.quota.entitlements) || !acct.quota.entitlements.length){
-      toast("检测到账号尚未开通额度", "warn", "正在自动尝试为您激活开通…");
+      toast("检测到账号尚未开通额度", "warn", "正在为您引导官方授权激活…");
       await activateAccount(authID, btn);
       return;
     }
     const who=acct.quota?acct.quota.plan_name:authID;
     const total=acct.quota?fmtCompact(acct.quota.total_grant):"?";
     toast("额度已刷新","ok",who+" · 合计 "+total);
-  }catch(e){ toast("刷新失败","err",e.message); }
+  }catch(e){
+    if(String(e.message||"").includes("无生效计划")){
+      toast("检测到账号尚未开通额度", "warn", "正在为您引导官方授权激活…");
+      await activateAccount(authID, btn);
+      return;
+    }
+    toast("刷新失败","err",e.message);
+  }
   finally{ busy(btn,false); }
 }
 
-// 动态按需加载阿里云智能验证 SDK
-function ensureAliyunCaptchaSDK(){
-  return new Promise((resolve, reject)=>{
-    if(window.initAliyunCaptcha) return resolve();
-    const existing=document.querySelector('script[src*="AliyunCaptcha.js"]');
-    if(existing){
-      existing.addEventListener("load", ()=>resolve());
-      existing.addEventListener("error", ()=>reject(new Error("验证码组件加载失败")));
+let activeOAuthPollTimer = null;
+let activeOAuthWindow = null;
+
+function openActivateModal(title, hint, authUrl, state, onComplete){
+  const titleEl = document.getElementById("activateModalTitle");
+  if(titleEl) titleEl.textContent = title || "⚡ 官方授权激活 Start Plan";
+  const hintEl = document.getElementById("activateModalHint");
+  if(hintEl) hintEl.textContent = hint || "正在连接 Z.ai 官方完成授权激活…";
+  const statusEl = document.getElementById("activateStatusText");
+  if(statusEl) statusEl.textContent = "已打开官方授权页面，等待授权完成…";
+  const link = document.getElementById("activateExternalLink");
+  if(link) link.href = authUrl || "#";
+  const modal = document.getElementById("activateModal");
+  if(modal) modal.classList.add("show");
+
+  if(activeOAuthPollTimer){
+    clearInterval(activeOAuthPollTimer);
+    activeOAuthPollTimer = null;
+  }
+
+  const startAt = Date.now();
+  activeOAuthPollTimer = setInterval(async ()=>{
+    // 5分钟超时
+    if(Date.now() - startAt > 5 * 60 * 1000){
+      clearInterval(activeOAuthPollTimer);
+      activeOAuthPollTimer = null;
+      if(statusEl) statusEl.textContent = "授权超时（5分钟），请重新发起";
+      toast("授权超时", "err", "请重新点击激活按钮发起授权");
       return;
     }
-    const s=document.createElement("script");
-    s.src="https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js";
-    s.async=true;
-    s.onload=()=>resolve();
-    s.onerror=()=>reject(new Error("无法加载阿里云安全验证组件，请检查网络"));
-    document.head.appendChild(s);
-  });
+
+    try{
+      const d = await api("/activate-poll?state=" + encodeURIComponent(state));
+      if(d && d.status === "success"){
+        clearInterval(activeOAuthPollTimer);
+        activeOAuthPollTimer = null;
+        try{ if(activeOAuthWindow && !activeOAuthWindow.closed) activeOAuthWindow.close(); }catch(_){}
+        closeActivateModal();
+        if(typeof onComplete === "function"){
+          onComplete(d);
+        }
+      }else if(d && d.status === "error"){
+        clearInterval(activeOAuthPollTimer);
+        activeOAuthPollTimer = null;
+        if(statusEl) statusEl.textContent = d.message || "授权失败";
+        toast("授权失败", "err", d.message || "请重试");
+      }else if(d && d.message){
+        if(statusEl) statusEl.textContent = d.message;
+      }
+    }catch(err){
+      // 轮询偶发网络错误静默跳过
+    }
+  }, 1200);
+}
+
+function closeActivateModal(){
+  if(activeOAuthPollTimer){
+    clearInterval(activeOAuthPollTimer);
+    activeOAuthPollTimer = null;
+  }
+  const modal = document.getElementById("activateModal");
+  if(modal) modal.classList.remove("show");
+}
+
+function onActivateMaskClick(ev){
+  if(ev.target && ev.target.id === "activateModal") closeActivateModal();
 }
 
 // 激活账号 Start Plan 每日额度
 async function activateAccount(authID, btn){
   busy(btn, true);
   try{
-    // 1. 尝试直接免验证码试探激活
-    let d=await api("/claim", {
+    const target = (lastAccounts||[]).find(x=>x.auth_id===authID);
+    const targetLabel = target ? (target.label || target.username || authID) : authID;
+
+    // 1. 发起官方 CLI OAuth 授权会话（指定关联当前账号 ID）
+    const startRes = await api("/activate-start", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({auth_id: authID})
     });
 
-    if(d && d.ok && d.quota){
-      const a=(lastAccounts||[]).find(x=>x.auth_id===authID);
-      if(a){ a.quota=d.quota; updateOneCard(a); }
-      toast("激活开通成功！", "ok", (d.quota.plan_name||"Start Plan")+" · 每日额度已到账");
+    if(!startRes || !startRes.ok || !startRes.authorize_url){
+      toast("发起授权失败", "err", (startRes&&startRes.error)||"无法获取官方授权地址");
       return;
     }
 
-    // 2. 若上游返回需要安全验证，唤起阿里云智能无感/滑块验证
-    if(d && d.captcha_required){
-      toast("正在唤起安全验证…", "ok");
-      await ensureAliyunCaptchaSDK();
+    // 2. 尝试打开官方授权弹窗
+    const w = 560, h = 720;
+    const left = Math.max(0, (window.screen.width - w) / 2);
+    const top = Math.max(0, (window.screen.height - h) / 2);
+    try{
+      activeOAuthWindow = window.open(
+        startRes.authorize_url,
+        "zcode_activate_popup",
+        `width=${w},height=${h},top=${top},left=${left},menubar=no,toolbar=no,status=no`
+      );
+    }catch(_){
+      activeOAuthWindow = null;
+    }
 
-      let captchaBox=document.getElementById("captchaBox");
-      if(!captchaBox){
-        captchaBox=document.createElement("div");
-        captchaBox.id="captchaBox";
-        document.body.appendChild(captchaBox);
-      }
-
-      window.initAliyunCaptcha({
-        SceneId: d.scene_id || "11xygtvd",
-        prefix: d.prefix || "no8xfe",
-        mode: "popup",
-        element: "#captchaBox",
-        button: btn,
-        getInstance: function(instance){
-          window._zcodeCaptchaInstance=instance;
-        },
-        success: async function(param){
-          busy(btn, true);
-          try{
-            const claimRes=await api("/claim", {
-              method: "POST",
-              headers: {"Content-Type": "application/json"},
-              body: JSON.stringify({
-                auth_id: authID,
-                captcha_verify_param: param.captchaVerifyParam,
-                captcha_region: d.region || "sgp"
-              })
-            });
-            if(claimRes && claimRes.ok){
-              toast("激活开通成功！", "ok", "Start Plan 每日 800 万额度已到账");
-              await load({__silent: true});
-            }else{
-              toast("激活失败", "err", claimRes.error || "未知错误");
-            }
-          }catch(e){
-            toast("激活请求失败", "err", e.message);
-          }finally{
-            busy(btn, false);
-          }
-        },
-        fail: function(err){
-          toast("验证未通过", "err", (err&&err.message)||"请重试");
-          busy(btn, false);
-        },
-        error: function(err){
-          toast("验证码服务异常", "err", (err&&err.message)||"网络错误");
-          busy(btn, false);
+    // 3. 打开激活引导弹窗并启动轮询
+    openActivateModal(
+      `⚡ 激活账号「${targetLabel}」`,
+      `正在通过 Z.ai 官方授权为该账号开通每日 800 万额度…`,
+      startRes.authorize_url,
+      startRes.state,
+      (res)=>{
+        toast("激活开通成功！", "ok", "Start Plan 每日 800 万额度已到账");
+        if(target && res.quota){
+          target.quota = res.quota;
+          updateOneCard(target);
         }
-      });
-      return;
-    }
-
-    if(d && d.error) toast("激活失败", "err", d.error);
+        load({__silent: true});
+      }
+    );
   }catch(e){
     toast("激活失败", "err", e.message);
   }finally{
@@ -922,8 +979,47 @@ function openImportModal(){
 }
 function closeImportModal(){document.getElementById("importModal").classList.remove("show")}
 function onImportMaskClick(ev){if(ev.target&&ev.target.id==="importModal")closeImportModal()}
-function openOAuthBridge(){
-  window.open("/v0/resource/plugins/zcode-provider/oauth-bridge", "_blank");
+
+// 顶部「OAuth 授权登录」按钮
+async function openOAuthBridge(){
+  try{
+    const startRes = await api("/activate-start", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: "{}"
+    });
+
+    if(!startRes || !startRes.ok || !startRes.authorize_url){
+      toast("发起 OAuth 登录失败", "err", (startRes&&startRes.error)||"无法获取官方授权地址");
+      return;
+    }
+
+    const w = 560, h = 720;
+    const left = Math.max(0, (window.screen.width - w) / 2);
+    const top = Math.max(0, (window.screen.height - h) / 2);
+    try{
+      activeOAuthWindow = window.open(
+        startRes.authorize_url,
+        "zcode_oauth_login",
+        `width=${w},height=${h},top=${top},left=${left},menubar=no,toolbar=no,status=no`
+      );
+    }catch(_){
+      activeOAuthWindow = null;
+    }
+
+    openActivateModal(
+      "OAuth 授权登录新账号",
+      "请在打开的 Z.ai 官方登录授权页面完成登录…",
+      startRes.authorize_url,
+      startRes.state,
+      (res)=>{
+        toast("新账号授权成功！", "ok", "已添加 ZCode 账号并开通额度");
+        load();
+      }
+    );
+  }catch(e){
+    toast("发起登录失败", "err", e.message);
+  }
 }
 /* ---------- 多文件批量导入（参照 workbuddy） ----------
    每个选中文件经同一个 /import 端点导入（一次一文件，串行）。导出文件

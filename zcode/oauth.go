@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -48,16 +49,18 @@ var (
 	mockOAuthCLIPollURL string
 )
 
-// oauthLoginSession 承载一次 CPA OAuth 登录的轮询状态。
+// oauthLoginSession 承载一次 CPA OAuth 登录或账号定向激活的轮询状态。
 type oauthLoginSession struct {
-	CreatedAt   time.Time
-	FlowID      string
-	PollToken   string
+	CreatedAt    time.Time
+	FlowID       string
+	PollToken    string
 	AuthorizeURL string
-	PollErr     string
-	Auth        *pluginapi.AuthData
-	Error       string
-	Completed   bool
+	PollErr      string
+	Auth         *pluginapi.AuthData
+	Error        string
+	Completed    bool
+	TargetAuthID string // 若非空，表示针对存量账号执行激活/更新，就地覆盖该账号凭据
+	TargetLabel  string // 存量账号的保留展示名称
 }
 
 var oauthSessions sync.Map
@@ -203,7 +206,9 @@ func zaiCLIPoll(flowID, pollToken string) (*zaiCLIPollResponse, error) {
 }
 
 // settleZaiPollResult 将 ready 状态的轮询结果落盘为账号，并构造宿主凭据记录。
-func settleZaiPollResult(resp *zaiCLIPollResponse, label string) (*pluginapi.AuthData, error) {
+// 若提供了 targetAuthID，优先在存量凭据中就地更新该账号的 APIKey、Token、AccessToken 及用户信息，
+// 保持原有 AuthID 不变，彻底避免新建重复账号卡片；若未提供则正常落盘为新账号。
+func settleZaiPollResult(resp *zaiCLIPollResponse, label string, targetAuthID string) (*pluginapi.AuthData, error) {
 	status := strings.TrimSpace(resp.Data.Status)
 	switch status {
 	case "failed":
@@ -232,10 +237,66 @@ func settleZaiPollResult(resp *zaiCLIPollResponse, label string) (*pluginapi.Aut
 	}
 
 	expiresAt := time.Now().Add(30 * 24 * time.Hour)
-	stored, errSave := saveZaiAccount(jwtToken, accessToken, "", resp.Data.User, expiresAt, label)
+
+	var target *StoredAuth
+	targetID := strings.TrimSpace(targetAuthID)
+	if targetID != "" {
+		accounts, _ := listAllAuthFiles()
+		for _, acc := range accounts {
+			if acc.AuthID == targetID {
+				target = acc
+				break
+			}
+		}
+	}
+
+	var stored *StoredAuth
+	var errSave error
+
+	if target != nil {
+		target.Token = jwtToken
+		target.APIKey = jwtToken
+		target.AccessToken = accessToken
+		target.ExpiresAt = expiresAt.Format(time.RFC3339)
+		target.UpdatedAt = time.Now().Format(time.RFC3339)
+		target.Disabled = false
+		target.TestFailed = false
+		if resp.Data.User != nil {
+			if target.UserID == "" {
+				target.UserID = strings.TrimSpace(resp.Data.User.UserID)
+			}
+			if target.Username == "" {
+				target.Username = strings.TrimSpace(resp.Data.User.Name)
+			}
+			if target.Email == "" {
+				target.Email = strings.TrimSpace(resp.Data.User.Email)
+			}
+			if target.AvatarURL == "" {
+				target.AvatarURL = strings.TrimSpace(resp.Data.User.Avatar)
+			}
+			if target.Label == "" || strings.HasPrefix(target.Label, "ZCode ") {
+				if target.Username != "" {
+					target.Label = "ZCode " + target.Username
+				}
+			}
+		}
+		if label != "" {
+			target.Label = label
+		}
+		fullPath := target.PhysicalPath
+		if fullPath == "" {
+			fullPath = filepath.Join(getAccountsDir(), authFileNameFor(target.APIKey))
+		}
+		errSave = writeAuthFileDirect(fullPath, target)
+		stored = target
+	} else {
+		stored, errSave = saveZaiAccount(jwtToken, accessToken, "", resp.Data.User, expiresAt, label)
+	}
+
 	if errSave != nil {
 		return nil, fmt.Errorf("save account: %w", errSave)
 	}
+	invalidateQuota(stored.AuthID)
 	globalQuotaRefresh.EnqueueOne(stored.AuthID)
 
 	rawStorage, _ := json.Marshal(stored)
@@ -256,11 +317,13 @@ func settleZaiPollResult(resp *zaiCLIPollResponse, label string) (*pluginapi.Aut
 	return &authData, nil
 }
 
-// handleStartLogin 处理宿主发起 OAuth 登录请求：发起官方 CLI 轮询流程并返回真实授权地址。
-func handleStartLogin(raw []byte) ([]byte, error) {
+// startAccountOAuth 发起一次官方 CLI OAuth 流程并保存会话状态。
+// [参数] targetAuthID: 可选的定向激活目标账号；label: 账号备注名。
+// [返回] 官方初始化响应、state 状态码、错误。
+func startAccountOAuth(targetAuthID, label string) (*zaiCLIInitResponse, string, error) {
 	initResp, err := zaiCLIInit("zai")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	authorizeURL := strings.TrimSpace(initResp.Data.AuthorizeURL)
@@ -269,7 +332,7 @@ func handleStartLogin(raw []byte) ([]byte, error) {
 		state = strings.TrimSpace(u.Query().Get("state"))
 	}
 	if state == "" {
-		return nil, fmt.Errorf("OAuth flow 初始化响应无效：authorize_url 缺少 state")
+		return nil, "", fmt.Errorf("OAuth flow 初始化响应无效：authorize_url 缺少 state")
 	}
 
 	oauthSessions.Store(state, &oauthLoginSession{
@@ -277,8 +340,21 @@ func handleStartLogin(raw []byte) ([]byte, error) {
 		FlowID:       initResp.Data.FlowID,
 		PollToken:    initResp.Data.PollToken,
 		AuthorizeURL: authorizeURL,
+		TargetAuthID: strings.TrimSpace(targetAuthID),
+		TargetLabel:  strings.TrimSpace(label),
 	})
 
+	return initResp, state, nil
+}
+
+// handleStartLogin 处理宿主发起 OAuth 登录请求：发起官方 CLI 轮询流程并返回真实授权地址。
+func handleStartLogin(raw []byte) ([]byte, error) {
+	initResp, state, err := startAccountOAuth("", "")
+	if err != nil {
+		return nil, err
+	}
+
+	authorizeURL := strings.TrimSpace(initResp.Data.AuthorizeURL)
 	expiresAt := time.Now().Add(oauthTTL)
 	if initResp.Data.ExpiresAt > 0 {
 		expiresAt = time.Unix(initResp.Data.ExpiresAt, 0)
@@ -381,7 +457,7 @@ func handlePollLogin(raw []byte) ([]byte, error) {
 			Message: session.Error,
 		})
 	case "ready":
-		authData, errSettle := settleZaiPollResult(pollResp, "")
+		authData, errSettle := settleZaiPollResult(pollResp, session.TargetLabel, session.TargetAuthID)
 		if errSettle != nil {
 			session.Completed = true
 			session.Error = errSettle.Error()
@@ -457,7 +533,7 @@ func handleOAuthBridge(req pluginapi.ManagementRequest) pluginapi.ManagementResp
 	// 主动查询一次，便于用户在桥接页即时看到结果。
 	if session.FlowID != "" {
 		if pollResp, errPoll := zaiCLIPoll(session.FlowID, session.PollToken); errPoll == nil {
-			if authData, errSettle := settleZaiPollResult(pollResp, ""); errSettle == nil {
+			if authData, errSettle := settleZaiPollResult(pollResp, session.TargetLabel, session.TargetAuthID); errSettle == nil {
 				session.Auth = authData
 				session.Completed = true
 				accountLabel := authData.Label

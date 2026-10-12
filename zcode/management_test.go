@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
@@ -138,5 +140,143 @@ func TestAuthParse_ZCodeCredential(t *testing.T) {
 
 	if !res.Handled || res.Auth.Provider != zcodeProviderID || res.Auth.Label != "My ZCode" {
 		t.Fatalf("unexpected AuthParseResponse: %+v", res)
+	}
+}
+
+func TestManagement_ActivateStartAndPoll(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "zcode_act_test_*")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+	setAccountsDir(tempDir)
+
+	// 1. 创建待激活存量账号
+	oldAuth := &StoredAuth{
+		Type:       zcodeProviderID,
+		Provider:   zcodeProviderID,
+		AuthID:     "zcode-target123",
+		APIKey:     "old.token.value",
+		Token:      "old.token.value",
+		Label:      "ZCode 待激活账号",
+		Disabled:   false,
+		TestFailed: false,
+	}
+	targetPath := filepath.Join(tempDir, "zcode-target123.json")
+	if err := writeAuthFileDirect(targetPath, oldAuth); err != nil {
+		t.Fatalf("write target auth: %v", err)
+	}
+
+	pollStatus := "pending"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/init" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"msg":  "",
+				"data": map[string]any{
+					"flow_id":       "flow_xyz",
+					"poll_token":    "poll_tok",
+					"authorize_url": "https://chat.z.ai/auth?state=state_test_123",
+				},
+			})
+			return
+		}
+		if r.URL.Path == "/poll/flow_xyz" {
+			if pollStatus == "pending" {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"code": 0,
+					"data": map[string]any{"status": "pending"},
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": map[string]any{
+					"status": "ready",
+					"token":  "new.jwt.token",
+					"zai": map[string]any{
+						"access_token": "new.access.token",
+					},
+					"user": map[string]any{
+						"user_id": "usr_999",
+						"name":    "旅行者999",
+						"email":   "999@test.local",
+					},
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	origInit := mockOAuthCLIInitURL
+	origPoll := mockOAuthCLIPollURL
+	mockOAuthCLIInitURL = ts.URL + "/init"
+	mockOAuthCLIPollURL = ts.URL + "/poll/"
+	defer func() {
+		mockOAuthCLIInitURL = origInit
+		mockOAuthCLIPollURL = origPoll
+	}()
+
+	// 2. 发起 /activate-start
+	startReq := pluginapi.ManagementRequest{
+		Method: http.MethodPost,
+		Path:   "/v0/management/plugins/zcode-provider/activate-start",
+		Body:   []byte(`{"auth_id":"zcode-target123"}`),
+	}
+	rawReq, _ := json.Marshal(startReq)
+	rawResp, err := handleManagement(rawReq)
+	if err != nil {
+		t.Fatalf("activate-start failed: %v", err)
+	}
+	httpResp := unwrapMgmtResp(t, rawResp)
+	if httpResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", httpResp.StatusCode, httpResp.Body)
+	}
+	state := gjson.GetBytes(httpResp.Body, "state").String()
+	if state != "state_test_123" {
+		t.Fatalf("expected state_test_123, got %s", state)
+	}
+
+	// 3. 轮询 pending 态
+	pollReq := pluginapi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/management/plugins/zcode-provider/activate-poll",
+		Query:  map[string][]string{"state": {state}},
+	}
+	rawPollReq, _ := json.Marshal(pollReq)
+	rawPollResp, _ := handleManagement(rawPollReq)
+	pollHTTPResp := unwrapMgmtResp(t, rawPollResp)
+	if gjson.GetBytes(pollHTTPResp.Body, "status").String() != "pending" {
+		t.Fatalf("expected pending status, got %s", pollHTTPResp.Body)
+	}
+
+	// 4. 模拟官方授权完成 ready 态
+	pollStatus = "ready"
+	rawPollResp2, _ := handleManagement(rawPollReq)
+	pollHTTPResp2 := unwrapMgmtResp(t, rawPollResp2)
+	if gjson.GetBytes(pollHTTPResp2.Body, "status").String() != "success" {
+		t.Fatalf("expected success status, got %s", pollHTTPResp2.Body)
+	}
+	if gjson.GetBytes(pollHTTPResp2.Body, "auth_id").String() != "zcode-target123" {
+		t.Fatalf("expected auth_id zcode-target123, got %s", pollHTTPResp2.Body)
+	}
+
+	// 5. 校验原账号已在原地被更新且无重复卡片
+	accs, errList := listAllAuthFiles()
+	if errList != nil || len(accs) != 1 {
+		t.Fatalf("expected exactly 1 account, got %d (err: %v)", len(accs), errList)
+	}
+	updated := accs[0]
+	if updated.AuthID != "zcode-target123" {
+		t.Fatalf("auth_id changed: %s", updated.AuthID)
+	}
+	if updated.Token != "new.jwt.token" || updated.AccessToken != "new.access.token" {
+		t.Fatalf("tokens not updated: token=%s, access=%s", updated.Token, updated.AccessToken)
+	}
+	if updated.Username != "旅行者999" || updated.UserID != "usr_999" {
+		t.Fatalf("user info not updated: %+v", updated)
 	}
 }

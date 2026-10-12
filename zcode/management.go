@@ -70,6 +70,8 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: base + "/test-active", Description: "Send an active ping chat inference request for one account."},
 			{Method: http.MethodGet, Path: base + "/credits", Description: "Query plan quota for one account or all accounts."},
 			{Method: http.MethodPost, Path: base + "/claim", Description: "Claim and activate ZCode Start Plan for one account."},
+			{Method: http.MethodPost, Path: base + "/activate-start", Description: "Start official OAuth authorization flow for account activation."},
+			{Method: http.MethodGet, Path: base + "/activate-poll", Description: "Poll official OAuth authorization flow result and update quota."},
 			{Method: http.MethodPost, Path: base + "/refresh", Description: "Start a background quota refresh round for all accounts."},
 			{Method: http.MethodGet, Path: base + "/refresh/status", Description: "Read background quota refresh progress."},
 		},
@@ -221,6 +223,13 @@ func handleManagement(raw []byte) ([]byte, error) {
 
 	case method == http.MethodPost && subPath == "/claim":
 		return handleClaimAccount(req.Body)
+
+	case method == http.MethodPost && subPath == "/activate-start":
+		return handleActivateStart(req.Body)
+
+	case method == http.MethodGet && subPath == "/activate-poll":
+		state := getQueryParam("state")
+		return handleActivatePoll(state)
 
 	case method == http.MethodPost && subPath == "/refresh":
 		return handleRefreshStart()
@@ -614,4 +623,129 @@ func handleClaimAccount(body []byte) ([]byte, error) {
 		"quota":   snap,
 	})
 	return makeHTTPResponse(http.StatusOK, bodyResp)
+}
+
+// handleActivateStart 处理 POST /activate-start 发起账号官方授权激活。
+// [参数] body: 可包含 auth_id（指定账号原地激活），为空时代表新账号授权登录。
+// [返回] 授权页面 URL、state 状态码以及 flow_id。
+func handleActivateStart(body []byte) ([]byte, error) {
+	authID := extractAuthIDFromBody(body)
+	var label string
+	if authID != "" {
+		accounts, _ := listAllAuthFiles()
+		for _, acc := range accounts {
+			if acc.AuthID == authID {
+				label = acc.Label
+				break
+			}
+		}
+	}
+
+	initResp, state, err := startAccountOAuth(authID, label)
+	if err != nil {
+		return makeHTTPResponse(http.StatusInternalServerError, []byte(fmt.Sprintf(`{"ok":false,"error":%q}`, err.Error())))
+	}
+
+	res := map[string]any{
+		"ok":            true,
+		"state":         state,
+		"flow_id":       initResp.Data.FlowID,
+		"authorize_url": initResp.Data.AuthorizeURL,
+		"auth_id":       authID,
+	}
+	resBytes, _ := json.Marshal(res)
+	return makeHTTPResponse(http.StatusOK, resBytes)
+}
+
+// handleActivatePoll 处理 GET /activate-poll 轮询官方授权激活状态。
+// [参数] state: 授权会话状态标识。
+// [返回] status (pending/success/error)，若激活成功并自动拉取到额度，附带 quota 快照。
+func handleActivatePoll(state string) ([]byte, error) {
+	state = strings.TrimSpace(state)
+	if state == "" {
+		return makeHTTPResponse(http.StatusBadRequest, []byte(`{"error":"state is required"}`))
+	}
+
+	rawSession, ok := oauthSessions.Load(state)
+	if !ok {
+		return makeHTTPResponse(http.StatusOK, []byte(`{"status":"error","message":"授权会话不存在或已过期"}`))
+	}
+	session, ok := rawSession.(*oauthLoginSession)
+	if !ok || session == nil {
+		return makeHTTPResponse(http.StatusOK, []byte(`{"status":"error","message":"授权会话数据异常"}`))
+	}
+
+	if time.Since(session.CreatedAt) > oauthTTL {
+		oauthSessions.Delete(state)
+		return makeHTTPResponse(http.StatusOK, []byte(`{"status":"error","message":"授权会话已超时（15分钟），请重新发起"}`))
+	}
+
+	if session.Completed {
+		if session.Error != "" {
+			return makeHTTPResponse(http.StatusOK, []byte(fmt.Sprintf(`{"status":"error","message":%q}`, session.Error)))
+		}
+		var quotaSnap *zcodeQuotaSnapshot
+		var authID string
+		if session.Auth != nil {
+			authID = session.Auth.ID
+			quotaSnap = cachedQuota(authID)
+		}
+		res := map[string]any{
+			"status":  "success",
+			"message": "ZCode 账号官方授权激活成功！",
+			"auth_id": authID,
+			"quota":   quotaSnap,
+		}
+		resBytes, _ := json.Marshal(res)
+		return makeHTTPResponse(http.StatusOK, resBytes)
+	}
+
+	pollResp, errPoll := zaiCLIPoll(session.FlowID, session.PollToken)
+	if errPoll != nil {
+		return makeHTTPResponse(http.StatusOK, []byte(`{"status":"pending","message":"等待官方授权结果（网络重试中）..."}`))
+	}
+
+	switch strings.TrimSpace(pollResp.Data.Status) {
+	case "pending":
+		return makeHTTPResponse(http.StatusOK, []byte(`{"status":"pending","message":"等待在 Z.ai 页面完成授权登录..."}`))
+	case "failed":
+		session.Completed = true
+		session.Error = "OAuth 授权失败或已取消"
+		oauthSessions.Delete(state)
+		return makeHTTPResponse(http.StatusOK, []byte(`{"status":"error","message":"OAuth 授权失败或已取消"}`))
+	case "ready":
+		authData, errSettle := settleZaiPollResult(pollResp, session.TargetLabel, session.TargetAuthID)
+		if errSettle != nil {
+			session.Completed = true
+			session.Error = errSettle.Error()
+			oauthSessions.Delete(state)
+			return makeHTTPResponse(http.StatusOK, []byte(fmt.Sprintf(`{"status":"error","message":%q}`, errSettle.Error())))
+		}
+		session.Auth = authData
+		session.Completed = true
+		oauthSessions.Delete(state)
+
+		// 授权成功后，立即拉取该账号最新生效额度
+		var quotaSnap *zcodeQuotaSnapshot
+		accounts, _ := listAllAuthFiles()
+		for _, acc := range accounts {
+			if acc.AuthID == authData.ID {
+				if snap, errQ := quotaForAccount(acc, true); errQ == nil {
+					quotaSnap = snap
+				}
+				break
+			}
+		}
+
+		res := map[string]any{
+			"status":  "success",
+			"message": "ZCode Start Plan 授权激活成功！",
+			"auth_id": authData.ID,
+			"quota":   quotaSnap,
+		}
+		resBytes, _ := json.Marshal(res)
+		return makeHTTPResponse(http.StatusOK, resBytes)
+	default:
+		return makeHTTPResponse(http.StatusOK, []byte(`{"status":"pending","message":"等待在 Z.ai 页面完成授权登录..."}`))
+	}
 }
