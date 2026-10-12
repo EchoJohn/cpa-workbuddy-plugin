@@ -202,8 +202,12 @@ func (m upstreamModelEntry) contextLength() int64 {
 
 func (m upstreamModelEntry) maxOutputTokens() int64 {
 	val := firstPositive(m.MaxOutputTokens, m.MaxCompletionToken, m.MaxTokens, m.MaxOutputTokensSnake, m.MaxTokensSnake)
-	if val < defaultRelaxedMaxTokens {
-		return defaultRelaxedMaxTokens
+	spec := resolveOfficialModelSpec(m.ID)
+	if val < spec.ReasoningMax && spec.ReasoningMax > 0 {
+		return spec.ReasoningMax
+	}
+	if val <= 0 {
+		return spec.MaxOutputTokens
 	}
 	return val
 }

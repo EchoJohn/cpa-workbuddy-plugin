@@ -462,8 +462,12 @@ func (m upstreamModelEntry) contextLength() int64 {
 // 最近修改时间 2026-09-12（对齐上游 maxOutputTokens）
 func (m upstreamModelEntry) maxOutputTokens() int64 {
 	val := firstPositive(m.MaxOutputTokens, m.MaxCompletionToken, m.MaxTokens)
-	if val < defaultRelaxedMaxTokens {
-		return defaultRelaxedMaxTokens
+	spec := resolveOfficialModelSpec(m.ID)
+	if val < spec.ReasoningMax && spec.ReasoningMax > 0 {
+		return spec.ReasoningMax
+	}
+	if val <= 0 {
+		return spec.MaxOutputTokens
 	}
 	return val
 }

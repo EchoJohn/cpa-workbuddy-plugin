@@ -483,19 +483,27 @@ func isEmptyValue(v any) bool {
 	return false
 }
 
-const defaultRelaxedMaxTokens int64 = 128000
-
-// relaxMaxTokensInPlace 放宽发往上游的 max_tokens 输出上限。
-// 当客户端未传入、或传入上限小于 128,000（如 Qoder 客户端写死的 8192）时，
-// 统一放宽至 128,000，保证思考模型在深度推理时不因提前触顶而被上游截断（finish_reason=length）；
-// 若客户端显式请求了大于 128,000 的数值，则原样保留。
+// relaxMaxTokensInPlace 根据模型官方规格自适应计算并放宽 max_tokens。
+// 当客户端未传入、或在推理模式下传入保守小值（如 Qoder 客户端写死的 8192）时，
+// 自动提升至该模型官方允许的推理上限（例如 DeepSeek 64k，GLM 128k），防止长思维链被截断；
+// 超过官方允许最大值时进行安全截断（clamp），防止上游网关报错 400。
 // [参数] obj：反序列化后的请求对象 map
 // [返回] 是否对 obj 产生了修改
-// 最近修改时间 2026-10-13 01:25:00（放宽输出 token 上限至 128k 解决思考链吃满配额缺陷）
+// 最近修改时间 2026-10-13 02:00:00（升级为按模型权威官方规格自适应计算）
 func relaxMaxTokensInPlace(obj map[string]any) bool {
+	model := jsonStr(obj, "model")
+	effort := strings.ToLower(strings.TrimSpace(jsonStr(obj, "reasoning_effort")))
+	isReasoning := effort != "" && effort != "none"
+	if !isReasoning {
+		mLower := strings.ToLower(model)
+		if strings.Contains(mLower, "reasoner") || strings.Contains(mLower, "thinking") || strings.HasPrefix(mLower, "o1") || strings.HasPrefix(mLower, "o3") {
+			isReasoning = true
+		}
+	}
 	val := jsonI64(obj, "max_tokens", "max_completion_tokens")
-	if val < defaultRelaxedMaxTokens {
-		obj["max_tokens"] = defaultRelaxedMaxTokens
+	finalTokens := computeAdaptiveMaxTokens(model, val, isReasoning)
+	if finalTokens != val || obj["max_tokens"] == nil {
+		obj["max_tokens"] = finalTokens
 		if _, hasMCT := obj["max_completion_tokens"]; hasMCT {
 			delete(obj, "max_completion_tokens")
 		}
