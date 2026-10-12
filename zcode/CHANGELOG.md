@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.11] - 2026-10-12
+
+### Fixed
+- **修复测试模型报 `405 + code 3012 request has been blocked due to unusual activity`**（刚登录的 OAuth 账号探活/调用全部被上游风控拦截，表现为"刚登录就不可用"）：
+  根因是请求头 `X-ZCode-App-Version` 取了具体版本号（`3.14.4`）。线上实测（`zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages`，同一账号 JWT、同一 IP 交错复测 8 次）确认：该头取具体版本号（`3.14.4` / `3.15.1` / `3.13.0` …）一律被上游 WAF 拦为 `405 + code 3012`；取非版本号字面量（`unknown` / `cli` / `electron`）稳定放行 `200`。
+  桌面端 `buildZCodeSourceHeadersFromContext` 亦以 `??"unknown"` 兜底，说明 `unknown` 才是上游认可的合法取值。修复后 `AppVersion` 默认改为 `unknown`，模型调用、模型发现、探活一并生效。
+- 新增回归守卫测试 `TestFingerprint_AppVersionMustNotBeConcreteRelease`，锁定 `X-ZCode-App-Version` 不得回退为语义化版本号（临时改回 `3.14.4` 会立即 FAIL 并提示 3012 风控）。
+
 ## [0.1.10] - 2026-10-12
 
 ### Fixed

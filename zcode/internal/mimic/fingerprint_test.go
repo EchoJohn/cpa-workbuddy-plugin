@@ -2,6 +2,7 @@ package mimic
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -19,8 +20,11 @@ func TestFingerprint_ApplyRequest(t *testing.T) {
 	if h.Get("http-referer") != "https://zcode.z.ai" {
 		t.Fatalf("expected referer, got %s", h.Get("http-referer"))
 	}
-	if h.Get("User-Agent") != "ZCode/3.14.4" {
+	if h.Get("User-Agent") != "ZCode/unknown" {
 		t.Fatalf("expected User-Agent, got %s", h.Get("User-Agent"))
+	}
+	if h.Get("X-ZCode-App-Version") != "unknown" {
+		t.Fatalf("expected X-ZCode-App-Version unknown, got %s", h.Get("X-ZCode-App-Version"))
 	}
 	if h.Get("x-zcode-agent") != "glm" {
 		t.Fatalf("expected agent glm, got %s", h.Get("x-zcode-agent"))
@@ -52,6 +56,24 @@ func TestFingerprint_Disabled(t *testing.T) {
 	}
 	if h.Get("User-Agent") != "" {
 		t.Fatalf("expected empty User-Agent when disabled, got %s", h.Get("User-Agent"))
+	}
+}
+
+func TestFingerprint_AppVersionMustNotBeConcreteRelease(t *testing.T) {
+	// 回归守卫：X-ZCode-App-Version 一旦被改成具体版本号（如 3.14.4），
+	// 上游 zcode-plan 端点会以 405 + code 3012 风控拦截，导致模型测试全部失败。
+	// 详见 DefaultConfig 中 AppVersion 的线上实测说明。
+	cfg := DefaultConfig()
+	fp := New(cfg, "k")
+	h := make(http.Header)
+	fp.ApplyRequest(h, "key", "req")
+
+	if got := h.Get("X-ZCode-App-Version"); got != "unknown" {
+		t.Fatalf("X-ZCode-App-Version 必须是上游放行值 unknown，当前为 %q；"+
+			"改成具体版本号会触发 3012 风控", got)
+	}
+	if matched, _ := regexp.MatchString(`^\d+\.\d+`, h.Get("X-ZCode-App-Version")); matched {
+		t.Fatalf("X-ZCode-App-Version 不得是语义化版本号，当前为 %q", h.Get("X-ZCode-App-Version"))
 	}
 }
 
