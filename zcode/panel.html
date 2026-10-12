@@ -67,6 +67,9 @@ button.sec{background:var(--btn-sec);color:var(--fg)}button.sec:hover{background
 .badge.cooling{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
 .badge.test-failed{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border);font-style:italic}
 .badge.plan{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
+.badge.warning{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border);font-weight:700}
+.actions .btn-act{color:var(--acc);border-color:var(--acc);font-weight:600}
+.actions .btn-act:hover{background:var(--acc-soft)}
 /* 后台刷新卡片三态（data-refresh-state：pending/running/done/failed）
    running 虚线高亮 + spinner；done 短暂绿色高亮；failed 红框 + ⚠️ 错误文本。 */
 .card[data-refresh-state="running"]{border:1px dashed var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
@@ -489,7 +492,7 @@ function sortedAccounts(accounts){
 function quotaHTML(a){
   const q=a&&a.quota;
   if(!q||!Array.isArray(q.entitlements)||!q.entitlements.length){
-    return `<div class="pb"><div class="pb-label"><span class="pb-primary"><span class="pb-segment">每日额度</span></span><span class="pb-used muted">未获取 (点刷新获取)</span></div><div class="pb-track"><div class="pb-bar" style="width:0%"></div></div></div>`;
+    return `<div class="pb"><div class="pb-label"><span class="pb-primary"><span class="pb-segment">每日额度</span></span><span class="pb-used err">未激活 · 需激活开通额度</span></div><div class="pb-track"><div class="pb-bar" style="width:0%"></div></div></div>`;
   }
   const total=Number(q.total_grant)||0;
   const segs=q.entitlements.map(e=>{
@@ -515,7 +518,13 @@ function card(a){
     ? `<button class="sec" data-action="enable" data-auth-index="${esc(a.auth_id)}">启用</button>`
     : `<button class="sec" data-action="disable" data-auth-index="${esc(a.auth_id)}">禁用</button>`;
   const titleName = displayName(a);
-  const planBadge=a.quota&&a.quota.plan_name?`<span class="badge plan" title="${esc(a.quota.plan_name)}">${esc(a.quota.plan_name)}</span>`:"";
+  const isUnactivated=!a.quota||!Array.isArray(a.quota.entitlements)||!a.quota.entitlements.length;
+  const planBadge=isUnactivated
+    ? `<span class="badge warning" title="该账号尚未激活 Start Plan，点击下方「激活开通」即可获得每日 800 万额度">未激活</span>`
+    : (a.quota&&a.quota.plan_name?`<span class="badge plan" title="${esc(a.quota.plan_name)}">${esc(a.quota.plan_name)}</span>`:"");
+  const activateBtn=isUnactivated
+    ? `<button class="sec btn-act" data-action="activate" data-auth-index="${esc(a.auth_id)}" title="一键激活开通 Start Plan 每日 800 万额度">⚡ 激活开通</button>`
+    : "";
   return `<div class="card" data-state="${st}" data-auth="${esc(a.auth_id)}" data-name="${esc(titleName)}" data-quota="${quotaTotal(a)}" data-search="${esc(((a.label||"")+" "+(a.username||"")+" "+(a.email||"")+" "+(a.user_id||"")+" "+(a.api_key_masked||"")+" "+(a.auth_id||"")).toLowerCase())}">
   <h2><span class="name" title="${esc(titleName)}">${esc(titleName)}</span> <span style="display:flex;gap:6px;align-items:center;flex:none">${stateBadge(a)}${planBadge}<button type="button" class="card-del" data-action="delete" data-auth-index="${esc(a.auth_id)}" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>
   <div class="uid" title="${esc(a.auth_id||"")}">${esc(a.auth_id||"")}</div>
@@ -527,6 +536,7 @@ function card(a){
   ${quotaHTML(a)}
   <div class="models">${modelTags}${more}</div>
   <div class="actions">
+    ${activateBtn}
     <button class="sec" data-action="quota" data-auth-index="${esc(a.auth_id)}" title="刷新该账号的每日额度">刷新额度</button>
     <button class="sec" data-action="test" data-auth-index="${esc(a.auth_id)}" title="选择模型发送一次真实推理请求">测试</button>
     ${toggleBtn}
@@ -549,6 +559,7 @@ function bindCardActions(root){
       const act=ev.currentTarget.dataset.action;
       const id=ev.currentTarget.dataset.authIndex;
       if(act==="test") openTestModal(id);
+      else if(act==="activate") activateAccount(id, ev.currentTarget);
       else if(act==="enable") setStatus(id,false,ev.currentTarget);
       else if(act==="disable") setStatus(id,true,ev.currentTarget);
       else if(act==="delete") openDeleteModal(id);
@@ -786,11 +797,118 @@ async function refreshQuota(authID, btn){
   busy(btn,true);
   try{
     const acct=await fetchAndPatchQuota(authID, {}, true);
-    const who=acct&&acct.quota?acct.quota.plan_name:authID;
-    const total=acct&&acct.quota?fmtCompact(acct.quota.total_grant):"?";
+    if(!acct.quota || !Array.isArray(acct.quota.entitlements) || !acct.quota.entitlements.length){
+      toast("检测到账号尚未开通额度", "warn", "正在自动尝试为您激活开通…");
+      await activateAccount(authID, btn);
+      return;
+    }
+    const who=acct.quota?acct.quota.plan_name:authID;
+    const total=acct.quota?fmtCompact(acct.quota.total_grant):"?";
     toast("额度已刷新","ok",who+" · 合计 "+total);
   }catch(e){ toast("刷新失败","err",e.message); }
   finally{ busy(btn,false); }
+}
+
+// 动态按需加载阿里云智能验证 SDK
+function ensureAliyunCaptchaSDK(){
+  return new Promise((resolve, reject)=>{
+    if(window.initAliyunCaptcha) return resolve();
+    const existing=document.querySelector('script[src*="AliyunCaptcha.js"]');
+    if(existing){
+      existing.addEventListener("load", ()=>resolve());
+      existing.addEventListener("error", ()=>reject(new Error("验证码组件加载失败")));
+      return;
+    }
+    const s=document.createElement("script");
+    s.src="https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js";
+    s.async=true;
+    s.onload=()=>resolve();
+    s.onerror=()=>reject(new Error("无法加载阿里云安全验证组件，请检查网络"));
+    document.head.appendChild(s);
+  });
+}
+
+// 激活账号 Start Plan 每日额度
+async function activateAccount(authID, btn){
+  busy(btn, true);
+  try{
+    // 1. 尝试直接免验证码试探激活
+    let d=await api("/claim", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({auth_id: authID})
+    });
+
+    if(d && d.ok && d.quota){
+      const a=(lastAccounts||[]).find(x=>x.auth_id===authID);
+      if(a){ a.quota=d.quota; updateOneCard(a); }
+      toast("激活开通成功！", "ok", (d.quota.plan_name||"Start Plan")+" · 每日额度已到账");
+      return;
+    }
+
+    // 2. 若上游返回需要安全验证，唤起阿里云智能无感/滑块验证
+    if(d && d.captcha_required){
+      toast("正在唤起安全验证…", "ok");
+      await ensureAliyunCaptchaSDK();
+
+      let captchaBox=document.getElementById("captchaBox");
+      if(!captchaBox){
+        captchaBox=document.createElement("div");
+        captchaBox.id="captchaBox";
+        document.body.appendChild(captchaBox);
+      }
+
+      window.initAliyunCaptcha({
+        SceneId: d.scene_id || "11xygtvd",
+        prefix: d.prefix || "no8xfe",
+        mode: "popup",
+        element: "#captchaBox",
+        button: btn,
+        getInstance: function(instance){
+          window._zcodeCaptchaInstance=instance;
+        },
+        success: async function(param){
+          busy(btn, true);
+          try{
+            const claimRes=await api("/claim", {
+              method: "POST",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({
+                auth_id: authID,
+                captcha_verify_param: param.captchaVerifyParam,
+                captcha_region: d.region || "sgp"
+              })
+            });
+            if(claimRes && claimRes.ok){
+              toast("激活开通成功！", "ok", "Start Plan 每日 800 万额度已到账");
+              await load({__silent: true});
+            }else{
+              toast("激活失败", "err", claimRes.error || "未知错误");
+            }
+          }catch(e){
+            toast("激活请求失败", "err", e.message);
+          }finally{
+            busy(btn, false);
+          }
+        },
+        fail: function(err){
+          toast("验证未通过", "err", (err&&err.message)||"请重试");
+          busy(btn, false);
+        },
+        error: function(err){
+          toast("验证码服务异常", "err", (err&&err.message)||"网络错误");
+          busy(btn, false);
+        }
+      });
+      return;
+    }
+
+    if(d && d.error) toast("激活失败", "err", d.error);
+  }catch(e){
+    toast("激活失败", "err", e.message);
+  }finally{
+    busy(btn, false);
+  }
 }
 
 /* ---------- account actions ---------- */

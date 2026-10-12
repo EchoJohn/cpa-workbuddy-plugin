@@ -69,6 +69,7 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodGet, Path: base + "/models", Description: "List models available for one account."},
 			{Method: http.MethodPost, Path: base + "/test-active", Description: "Send an active ping chat inference request for one account."},
 			{Method: http.MethodGet, Path: base + "/credits", Description: "Query plan quota for one account or all accounts."},
+			{Method: http.MethodPost, Path: base + "/claim", Description: "Claim and activate ZCode Start Plan for one account."},
 			{Method: http.MethodPost, Path: base + "/refresh", Description: "Start a background quota refresh round for all accounts."},
 			{Method: http.MethodGet, Path: base + "/refresh/status", Description: "Read background quota refresh progress."},
 		},
@@ -217,6 +218,9 @@ func handleManagement(raw []byte) ([]byte, error) {
 			authID = getQueryParam("auth_id")
 		}
 		return handleQuotaQuery(authID, getQueryParam("force") == "1" || getQueryParam("force") == "true")
+
+	case method == http.MethodPost && subPath == "/claim":
+		return handleClaimAccount(req.Body)
 
 	case method == http.MethodPost && subPath == "/refresh":
 		return handleRefreshStart()
@@ -528,4 +532,86 @@ func handleRefreshStart() ([]byte, error) {
 func handleRefreshStatus() ([]byte, error) {
 	body, _ := json.Marshal(globalQuotaRefresh.Snapshot())
 	return makeHTTPResponse(http.StatusOK, body)
+}
+
+// handleClaimAccount 处理 POST /claim 激活账号 Start Plan 请求。
+//
+// [参数] body: 包含 auth_index / auth_id，以及可选的 captcha_verify_param、captcha_region。
+// [返回] 激活成功后的额度快照；若上游要求人机验证，返回结构化 captcha_required 配置。
+func handleClaimAccount(body []byte) ([]byte, error) {
+	authID := extractAuthIDFromBody(body)
+	if authID == "" {
+		return makeHTTPResponse(http.StatusBadRequest, []byte(`{"error":"auth_id is required"}`))
+	}
+
+	accounts, err := listAllAuthFiles()
+	if err != nil {
+		return makeHTTPResponse(http.StatusInternalServerError, []byte(fmt.Sprintf(`{"error":%q}`, err.Error())))
+	}
+
+	var target *StoredAuth
+	for _, acc := range accounts {
+		if acc.AuthID == authID {
+			target = acc
+			break
+		}
+	}
+	if target == nil {
+		return makeHTTPResponse(http.StatusNotFound, []byte(`{"error":"account not found"}`))
+	}
+
+	verifyParam := gjson.GetBytes(body, "captcha_verify_param").String()
+	region := gjson.GetBytes(body, "captcha_region").String()
+	if region == "" {
+		region = defaultAliyunRegion
+	}
+
+	snap, errClaim := claimAccountStartPlan(target, verifyParam, region)
+	if errClaim != nil {
+		errMsg := errClaim.Error()
+		if strings.Contains(errMsg, "captcha") || strings.Contains(errMsg, "3007") {
+			bodyResp, _ := json.Marshal(map[string]any{
+				"ok":               false,
+				"captcha_required": true,
+				"scene_id":         defaultAliyunSceneID,
+				"prefix":           defaultAliyunPrefix,
+				"region":           defaultAliyunRegion,
+				"error":            "需要完成安全验证以激活套餐",
+			})
+			return makeHTTPResponse(http.StatusOK, bodyResp)
+		}
+		return makeHTTPResponse(http.StatusBadRequest, []byte(fmt.Sprintf(`{"error":%q}`, errMsg)))
+	}
+
+	// 激活成功后，若套餐中含有可用模型，尝试动态更新至该账号的 Models 字段中
+	if snap != nil && len(snap.Entitlements) > 0 {
+		var activeModels []string
+		mSeen := make(map[string]struct{})
+		for _, ent := range snap.Entitlements {
+			name := strings.TrimSpace(ent.ShowName)
+			if name == "" {
+				name = strings.TrimPrefix(ent.Capability, "model:")
+			}
+			name = normalizeOfficialGLMModelID(name)
+			if name != "" {
+				if _, ok := mSeen[name]; !ok {
+					mSeen[name] = struct{}{}
+					activeModels = append(activeModels, name)
+				}
+			}
+		}
+		if len(activeModels) > 0 {
+			target.Models = activeModels
+			target.UpdatedAt = time.Now().Format(time.RFC3339)
+			fullPath := filepath.Join(getAccountsDir(), authFileNameFor(target.APIKey))
+			_ = writeAuthFileDirect(fullPath, target)
+		}
+	}
+
+	bodyResp, _ := json.Marshal(map[string]any{
+		"ok":      true,
+		"message": "Start Plan 激活成功",
+		"quota":   snap,
+	})
+	return makeHTTPResponse(http.StatusOK, bodyResp)
 }

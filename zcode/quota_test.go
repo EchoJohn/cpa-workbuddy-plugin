@@ -183,3 +183,96 @@ func TestHandleQuotaQuery_AllAccounts(t *testing.T) {
 		t.Fatalf("expected error field for unreachable upstream, got %+v", body.Accounts[0])
 	}
 }
+
+// TestClaimAccountStartPlan_MockSuccess 验证套餐激活开通接口与请求头构造。
+func TestClaimAccountStartPlan_MockSuccess(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/claim" {
+			if r.Method != http.MethodPost {
+				t.Fatalf("expected POST, got %s", r.Method)
+			}
+			if r.Header.Get("X-Aliyun-Captcha-Verify-Param") != "mock_verify_param_123" {
+				t.Fatalf("missing or wrong verify param header")
+			}
+			if r.Header.Get("X-Aliyun-Captcha-Verify-Region") != "sgp" {
+				t.Fatalf("missing or wrong verify region header")
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"code":0,"msg":"success","data":{"plan":{"plan_id":"zcode-v3-start-plan","status":"active"}}}`))
+			return
+		}
+		if r.URL.Path == "/current" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"code":0,"data":{"plans":[{"plan_id":"zcode-v3-start-plan","name":"ZCode Start Plan","status":"active","entitlements":[{"entitlement_id":"e1","show_name":"GLM-5.3","grant_units":3000000}]}]}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	claimURLForTest = ts.URL + "/claim"
+	quotaURLForTest = ts.URL + "/current"
+	defer func() {
+		claimURLForTest = ""
+		quotaURLForTest = ""
+	}()
+
+	sa := &StoredAuth{
+		AuthID: "zcode-test-claim",
+		Token:  "jwt-test-claim",
+		APIKey: "jwt-test-claim",
+	}
+
+	snap, err := claimAccountStartPlan(sa, "mock_verify_param_123", "sgp")
+	if err != nil {
+		t.Fatalf("claim failed: %v", err)
+	}
+	if snap == nil || snap.PlanID != "zcode-v3-start-plan" || snap.TotalGrant != 3000000 {
+		t.Fatalf("unexpected snapshot: %+v", snap)
+	}
+}
+
+// TestHandleClaimAccount_CaptchaRequired 验证当上游要求验证码时返回结构化配置。
+func TestHandleClaimAccount_CaptchaRequired(t *testing.T) {
+	dir := t.TempDir()
+	setAccountsDir(dir)
+	defer setAccountsDir("")
+
+	writeAuthFileDirect(dir+"/zcode-bbbbbbbbbbbbbbbb.json", &StoredAuth{
+		Type: zcodeProviderID, Provider: zcodeProviderID, AuthID: "zcode-bbbbbbbbbbbbbbbb",
+		APIKey: "jwt-b", Token: "jwt-b", Label: "B",
+	})
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"code":3007,"msg":"captcha verify failed"}`))
+	}))
+	defer ts.Close()
+
+	claimURLForTest = ts.URL
+	defer func() { claimURLForTest = "" }()
+
+	body := []byte(`{"auth_id":"zcode-bbbbbbbbbbbbbbbb"}`)
+	raw, err := handleClaimAccount(body)
+	if err != nil {
+		t.Fatalf("handleClaimAccount error: %v", err)
+	}
+
+	var env struct {
+		OK     bool            `json:"ok"`
+		Result json.RawMessage `json:"result"`
+	}
+	_ = json.Unmarshal(raw, &env)
+	var resp pluginapi.ManagementResponse
+	_ = json.Unmarshal(env.Result, &resp)
+
+	var res struct {
+		OK              bool   `json:"ok"`
+		CaptchaRequired bool   `json:"captcha_required"`
+		SceneID         string `json:"scene_id"`
+	}
+	_ = json.Unmarshal(resp.Body, &res)
+	if res.OK || !res.CaptchaRequired || res.SceneID != defaultAliyunSceneID {
+		t.Fatalf("expected captcha_required response, got %+v", res)
+	}
+}

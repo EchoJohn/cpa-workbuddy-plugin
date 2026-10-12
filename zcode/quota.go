@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,10 +18,20 @@ import (
 // 每个 entitlement 描述一个模型在某个周期内的授予额度（grant_units，如每日 300 万 token）。
 // 该端点是 zcode 面板额度可视化的唯一可靠来源——billing/balance（余额/已用）在免费
 // start-plan 账号上固定返回 `400 code 3001 parameter error`，故不采用。
-const zcodeQuotaURL = "https://zcode.z.ai/api/v1/zcode-plan/billing/current"
+const (
+	zcodeQuotaURL        = "https://zcode.z.ai/api/v1/zcode-plan/billing/current"
+	zcodeClaimURL        = "https://zcode.z.ai/api/v1/zcode-plan/billing/claim"
+	defaultStartPlanID   = "zcode-v3-start-plan"
+	defaultAliyunRegion  = "sgp"
+	defaultAliyunSceneID = "11xygtvd"
+	defaultAliyunPrefix  = "no8xfe"
+)
 
 // quotaURLForTest 供单元测试注入 mock 端点；为空时使用 zcodeQuotaURL。
-var quotaURLForTest string
+var (
+	quotaURLForTest string
+	claimURLForTest string
+)
 
 // zcodeQuotaTTL 是额度快照的进程内缓存时长，避免面板频繁打开时反复打上游。
 const zcodeQuotaTTL = 5 * time.Minute
@@ -196,6 +207,12 @@ func quotaForAccount(sa *StoredAuth, force bool) (*zcodeQuotaSnapshot, error) {
 
 	snap, errFetch := fetchAccountQuota(sa)
 	if errFetch != nil {
+		// 若因新导入账号未开通计划导致，刷新额度时自动尝试一次静默激活
+		if strings.Contains(errFetch.Error(), "无生效计划") {
+			if claimedSnap, errClaim := claimAccountStartPlan(sa, "", ""); errClaim == nil && claimedSnap != nil {
+				return claimedSnap, nil
+			}
+		}
 		// 上游瞬时拉取失败：若存在历史有效快照，优雅回退旧缓存，避免网络抖动导致额度清空
 		if hasOld && oldEntry.quota != nil {
 			return oldEntry.quota, nil
@@ -206,6 +223,86 @@ func quotaForAccount(sa *StoredAuth, force bool) (*zcodeQuotaSnapshot, error) {
 	zcodeQuotaCache[key] = zcodeQuotaCacheEntry{quota: snap, fetchedAt: time.Now()}
 	zcodeQuotaMu.Unlock()
 	return snap, nil
+}
+
+// claimAccountStartPlan 向官方端点发起套餐激活开通。
+//
+// [参数] sa: 待激活账号凭据; verifyParam: 阿里云智能验证签名(可为空时进行静默试探); region: 验证码区域。
+// [返回] 激活成功后的最新额度快照；若上游要求验证码且入参为空，返回明确错误。
+func claimAccountStartPlan(sa *StoredAuth, verifyParam, region string) (*zcodeQuotaSnapshot, error) {
+	if sa == nil {
+		return nil, fmt.Errorf("nil account")
+	}
+	jwt := strings.TrimSpace(sa.Token)
+	if jwt == "" {
+		jwt = strings.TrimSpace(sa.APIKey)
+	}
+	if jwt == "" {
+		return nil, fmt.Errorf("账号缺少 JWT，无法激活套餐")
+	}
+
+	targetURL := zcodeClaimURL
+	if strings.TrimSpace(claimURLForTest) != "" {
+		targetURL = strings.TrimSpace(claimURLForTest)
+	}
+
+	payload := map[string]string{
+		"plan_id": defaultStartPlanID,
+	}
+	reqBody, _ := json.Marshal(payload)
+
+	req, errNew := http.NewRequest(http.MethodPost, targetURL, bytes.NewReader(reqBody))
+	if errNew != nil {
+		return nil, fmt.Errorf("create claim request: %w", errNew)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "ZCode/3.15.1")
+	req.Header.Set("X-ZCode-App-Version", "3.15.1")
+	req.Header.Set("X-Platform", "win32-x64")
+	req.Header.Set("HTTP-Referer", "https://zcode.z.ai")
+
+	if strings.TrimSpace(verifyParam) != "" {
+		req.Header.Set("X-Aliyun-Captcha-Verify-Param", strings.TrimSpace(verifyParam))
+		if strings.TrimSpace(region) == "" {
+			region = defaultAliyunRegion
+		}
+		req.Header.Set("X-Aliyun-Captcha-Verify-Region", strings.TrimSpace(region))
+	}
+
+	resp, errDo := modelHTTPClient.Do(req)
+	if errDo != nil {
+		return nil, fmt.Errorf("request claim: %w", errDo)
+	}
+	defer resp.Body.Close()
+
+	raw, errRead := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if errRead != nil {
+		return nil, fmt.Errorf("read claim response: %w", errRead)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("claim error %d: %s", resp.StatusCode, string(raw))
+	}
+
+	var parsed struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	_ = json.Unmarshal(raw, &parsed)
+	if parsed.Code != 0 {
+		msg := strings.TrimSpace(parsed.Msg)
+		if msg == "" {
+			msg = fmt.Sprintf("code=%d", parsed.Code)
+		}
+		return nil, fmt.Errorf("claim failed: %s", msg)
+	}
+
+	// 激活成功：清除旧缓存并立刻拉取最新生效额度
+	invalidateQuota(sa.AuthID)
+	return quotaForAccount(sa, true)
 }
 
 // cachedQuota 只读缓存中的额度（不触发上游请求），供 /accounts 列表附带展示。
