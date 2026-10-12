@@ -33,6 +33,7 @@
   4. 统一判定：各插件导出 `accountRoutable(authID)`（`!cooling && !testFailed`）与 `accountLowerCredits(left,right)`，被 `pickActiveAuth` / `ensureDefaultActiveAuth` / `pickSessionAuth` / `scheduler.pick` 共用；面板选中项 = 「可用账号中积分最低者」；
   5. 换号重试 `pickNextAuth` 同样跳过测试标签账号，但保持宿主顺序不排序；
   6. **保号池（`preserve`）已在全量兄弟插件彻底移除**，其原职责由 `test_failed` 标签与低积分调度统一承载。
+- **Qoder / Qoder AI 禁用后台自动探活机制（2026-10-12 架构规则，0.1.10/0.9.31）**：因 Qoder 官方账号对同账号突发调用限流（HTTP 200 业务码 `110: Billing daily count exceeded`），删除了自动探活**全链路**——`doActivePing`（5 模型轮测）、`triggerActivePing`、30 分钟节流状态、`refresh_runner` 触发点与 watchdog 探活语义全部移除，后台只拉取额度快照与活动状态，零推理调用；探活能力仅保留前端面板单次手动触发（`handleTestActive`）。**并完整下线 `test_failed` 机制**：其打标/清标逻辑唯一宿主在自动探活内，探活移除后存量标签将永久无法清除、导致账号被永久排除调度，故一并删除机制本体（`test_failed_tag.go`）、三处调度排除判据（`scheduler.go`/`active_auth.go`/`failover_retry.go`）、面板字段与「测试」筛选标签，启动时由 `stripAnomalyKey` 剥离存量标签；`accountRoutable` 现只剩 `!cooling`。**签到时间由每 4 小时收敛为 10:00/22:00 两次**（`checkinHours=[10,22]` + `shouldRunCheckinNow` 门控，防止共享定时器在 keepalive 时刻误触发签到）。
 - **traework `cachedCreditsScore` 空指针曾致 panic（2026-09-29 修复；保号池已于 2026-09-30 移除）**：缓存条目存在但 credits 尚未拉取时原代码直接解引用 `entry.credits.TotalRemain` 会 panic，现归一为「未知积分 (-1), not exhausted」。workbuddy 侧对应函数本就有 `entry.credits == nil` 守卫，无需改。
 - **traework 配置与运行时脱钩缺陷已修复（2026-10-11）**：`traework/config.go` 在 `configure()` 解析 `scheduler_mode` 时补齐 `setSchedulerMode(v)`，彻底打通配置与调度器状态脱钩，默认值为 `session`。
 - config_yaml 经 host RPC 传输时 []byte 走 base64；测试必须 `json.Marshal(map{"config_yaml": []byte(yaml)})`
