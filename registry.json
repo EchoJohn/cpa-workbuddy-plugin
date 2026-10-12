@@ -503,7 +503,7 @@
       "name": "ZCode Provider",
       "description": "ZCode (BigModel Coding Plan) Anthropic-compatible provider for CLIProxyAPI: ZCode desktop client fingerprint mimic, multi-account management, dynamic models, active-ping test picker, failover scheduler, and web panel.",
       "author": "Sliverkiss",
-      "version": "0.1.14",
+      "version": "0.1.15",
       "repository": "https://github.com/luode0320/cpa-workbuddy-plugin",
       "logo": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/assets/icons/ZCode.png",
       "homepage": "https://github.com/luode0320/cpa-workbuddy-plugin/tree/main/zcode",
@@ -521,51 +521,51 @@
           {
             "goos": "darwin",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.14/zcode-provider_0.1.14_darwin_amd64.zip",
-            "sha256": "04ebf8650558f33e1b2fc993609a9b27402cda9fd4b40daf329ed74429e96ad1",
-            "size": 3054267
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.15/zcode-provider_0.1.15_darwin_amd64.zip",
+            "sha256": "095a50106e9bce10eeaf3b6e0b6ab7eb6dfb824d02ffc2af8b5eb97275d55276",
+            "size": 3061367
           },
           {
             "goos": "darwin",
             "goarch": "arm64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.14/zcode-provider_0.1.14_darwin_arm64.zip",
-            "sha256": "c45f939198d7df177b474455c4f2b92331b0ff97289fae805e78bfa74ee38baa",
-            "size": 2818515
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.15/zcode-provider_0.1.15_darwin_arm64.zip",
+            "sha256": "a8abf03ac274325f413619741477ac3b67e1b4aa65a9afe76851371cf3c0a8cb",
+            "size": 2824193
           },
           {
             "goos": "freebsd",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.14/zcode-provider_0.1.14_freebsd_amd64.zip",
-            "sha256": "41c21ad6dc5869ef8744cb8063f2cff6d92c7650bb7d45df1fc4c5beeda92ab2",
-            "size": 3126464
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.15/zcode-provider_0.1.15_freebsd_amd64.zip",
+            "sha256": "ca03ca9de21150136db534c4337a67314d9eeb040720050dde19a484c72bc713",
+            "size": 3131390
           },
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.14/zcode-provider_0.1.14_linux_amd64.zip",
-            "sha256": "c88bdf1cf1bad90eb90e5ef64797417e6ff8ee591d6f264ef27fcdb53d2651e3",
-            "size": 3205496
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.15/zcode-provider_0.1.15_linux_amd64.zip",
+            "sha256": "72f682caf7bbf1369e7eba2e905368e90afc2c67315df5bbe9a1c09626983709",
+            "size": 3211726
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.14/zcode-provider_0.1.14_linux_arm64.zip",
-            "sha256": "6aa31865cbe00a638440b55cd90e7ccea1a65021c210e13cbbf20cda3ed44ddd",
-            "size": 2913293
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.15/zcode-provider_0.1.15_linux_arm64.zip",
+            "sha256": "e17f720b389933dc3ff12dbabf8e49a0d78d85d2b4bdc1734b1fd980c1121b01",
+            "size": 2917631
           },
           {
             "goos": "windows",
             "goarch": "amd64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.14/zcode-provider_0.1.14_windows_amd64.zip",
-            "sha256": "e7a886ffad92e4b8af57fafa3c5cb2b0c8cbe008bb8e14f20ace99267db9fd94",
-            "size": 3125867
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.15/zcode-provider_0.1.15_windows_amd64.zip",
+            "sha256": "7c3c230d44ea44b544f591afec4585436b152df4610ff206481409f238531666",
+            "size": 3130926
           },
           {
             "goos": "windows",
             "goarch": "arm64",
-            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.14/zcode-provider_0.1.14_windows_arm64.zip",
-            "sha256": "89cb47b0e2663d2352061a5983d4f142fcc7ca784e53f4589f9766e3363feaed",
-            "size": 2897334
+            "url": "https://raw.githubusercontent.com/luode0320/cpa-workbuddy-plugin/main/release-assets/zcode-provider-0.1.15/zcode-provider_0.1.15_windows_arm64.zip",
+            "sha256": "7bc37642fc1fd8b57f79bfd2efb6604e6724102d8ace2e543694a2a6e67f7dbb",
+            "size": 2900111
           }
         ]
       }
