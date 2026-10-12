@@ -320,6 +320,8 @@
 - 并行工作区安全发布：`git add` 必须显式列文件（禁 `git add <dir>`），staged 后 `git diff --cached --name-only | grep` 反向确认无外来文件混入。
 - 资产下载：`scripts/download-release-assets.py`（urllib 直连 releases/download + sha256 自校验）；registry 校验 `scripts/validate-registry.py`。
 - 发布后清理（每次发布闭环后必做）：`release-assets/` 受 git 跟踪且被 registry raw URL 直接引用，只保留 registry 当前版本目录，历史版本用 `scripts/prune-release-assets.py` 删除（`git rm` 后提交推送）；本地未跟踪缓存 `.workbuddy/release-assets/` 直接删。详见项目 skill `project-cpa-workbuddy-plugin-release-asset-prune-rules`。
+- **生产容器重启红线（非必要不重启，强制）**：**非必要不要重启生产 cpa 容器**（`cli-proxy-api`）。插件的新增 / 更新 / 安装一律走 `plugin-store install`（管理 API）热重载生效——该路径默认返回 `restart_required:false`，**插件的更新安装一般不需要重启容器**；`docker cp` 新 `.so`、`PUT /v0/management/plugins/<p>/config` 写同内容都不触发加载，重启也不是更"干净"的生效方式。重启会中断在线流量并触发 60–80 秒冷启动（9 插件 + 模型刷新），属高成本、高影响操作：只有热重载经证据确认未生效（`install` 后 `docker logs cli-proxy-api | grep "hot reloaded"` 无该插件记录）或生产配置损坏恢复等**必要场景**，且已取得用户明确确认时才执行；否则把重启时机交用户决定，不得把"重启宿主"当作发布收尾的默认动作。完整规则见项目 skill `project-cpa-workbuddy-plugin-release-rules`（Step 13 / 踩坑 48）与 `project-cpa-workbuddy-plugin-host-config-safety-rules`（配置写入红线）。
+- **生产配置存储红线（不手工改数据库表，强制）**：生产 CPA 的插件配置由 `plugin-store install` 一条命令自动维护——CPA 自动把该插件的 `version` + 7 平台 `artifacts` 写入 `config_store` 表（MySQL 容器 `mysql` → 库 `cli_proxy_api` → 表 `config_store` → 单条 `id='config'` 的 `content`），随后逐字节原样落盘 spool `config.yaml` 并热重载，**零人工介入，任何人、任何步骤都不需要直接读写该表**。**⛔ 禁止**为了「确认 / 修改插件配置」而 `select content from cli_proxy_api.config_store` 再把内容写回：读出的 content 经 JSON 二次序列化写回会让真实换行退化为字面 `\n`、整篇塌缩单行，YAML 首字符 `#` 被判为注释 → 解析为空配置 → `remote-management.secret-key` / `port` 全丢 → `/v0` `/v8` 管理路由全 404、端口漂移、外网 502（**2026-10-11 两次生产事故成因**）。非插件配置走 `PUT /v8/management/config`；数据库表**只读不写**（`select` 可以，读完绝不写回）。损坏铁证：原反斜杠被再转义一层（`\"` → `\\"`）；自检 `select (length(content)-length(replace(content, char(10), ''))) from cli_proxy_api.config_store where id='config';` 正常应为数十量级，**=1 即已损坏**。完整规则见项目 skill `project-cpa-workbuddy-plugin-release-rules`（Step 13 / 踩坑 54）与 `project-cpa-workbuddy-plugin-host-config-safety-rules`。
 
 ### 插件架构事实
 
@@ -331,6 +333,8 @@
 - 磁盘写路径：`host.auth.save` 会丢未知顶层字段 → 直写物理 auth 文件（`writeAuthFileDirect` + fsnotify），host 侧 watcher 映射 disabled 进调度器；auth 目录 `~/.antigravity_cockpit/<plugin>_accounts/`。
 - config_yaml 经 host RPC 传输时 `[]byte` 走 base64；测试必须 `json.Marshal(map{"config_yaml": []byte(yaml)})`。
 - 管理路由前缀随 plugin id：`/v0/management/plugins/<id>/*`；panel.html 的 `const API` 必须与 id 一致（0.9.7 404 根因）。
+- **流式终止、测试探活提速与 OAuth 防假成功规范（强制）**：① SSE 扫描遇到 `[DONE]` 或 `event: done` 必须立即 `break`/返回哨兵并主动关闭流，严禁 `continue` 导致死等 Keep-Alive 空闲连接；`hostHTTPDoStreamDirect` 必须使用 `liveBody: resp.Body` 实时流而非 `io.ReadAll` 全量预缓冲；② 面板「测试」按钮（`/test-active`）与定时探活（`active_ping`）必须走流式请求（`stream: true, max_tokens: 1`）并在收到首个有效输出帧时即刻返回 + 异步关闭流（消除思考模型生成数百个 `reasoning_content` token 的 5~15s 等待），同时拦截 HTTP 200 下的 `event: error` 并预热 TLS Keep-Alive 连接池；③ `handlePollLogin` 严禁扫描 `hostAuthList()` 的 `CreatedAt > startedAt` 判成功（`writeAuthFileDirect` 原子重命名刷新会重置 `CreatedAt` 造成未授权自动假成功）。完整规则见项目 skill `project-cpa-workbuddy-plugin-sse-and-ping-optimization-rules`。
+- **大模型官方规格自适应与 max_tokens 放宽规范（强制）**：坚决杜绝盲目硬编码 8192 或无差别填 128k 两种极端反模式；各插件必须建立官方规格表（Model Specs Matrix），并在请求预处理中实施自适应计算：思考/推理模式下客户端传入保守小值（<=8192）自动放宽至官方推理上限（DeepSeek 64k、GLM 128k、Claude 64k 等），防止思维链吃满配额提前截断；客户端请求超出官方上限时执行安全区间截断（clamp）防止上游报 400；模型元数据输出上限保底对齐官方规格。完整规则见项目 skill `project-cpa-workbuddy-plugin-model-specs-and-max-tokens-rules`。
 
 ### 关键设计决策
 
