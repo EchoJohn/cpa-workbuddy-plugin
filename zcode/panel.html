@@ -66,6 +66,18 @@ button.sec{background:var(--btn-sec);color:var(--fg)}button.sec:hover{background
 .badge.disabled{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
 .badge.cooling{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
 .badge.test-failed{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border);font-style:italic}
+.badge.plan{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
+/* 后台刷新卡片三态（data-refresh-state：pending/running/done/failed）
+   running 虚线高亮 + spinner；done 短暂绿色高亮；failed 红框 + ⚠️ 错误文本。 */
+.card[data-refresh-state="running"]{border:1px dashed var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
+.card[data-refresh-state="done"]{border-color:var(--ok);box-shadow:0 0 0 2px var(--ok-border);background:var(--ok-soft)}
+.card[data-refresh-state="failed"]{border-color:var(--err);box-shadow:0 0 0 2px var(--err-border)}
+.ref-tag{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:3px 10px;border-radius:99px;white-space:nowrap}
+.ref-tag.ref-running{background:var(--acc);color:var(--on-acc)}
+.ref-tag.ref-pending{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border)}
+.ref-tag.ref-failed{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
+.ref-tag .spin{border-color:currentColor;border-top-color:transparent;margin-right:0;vertical-align:-2px}
+.ref-progress{color:var(--warn);font-size:12px}
 .filter-bar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .ftag{background:var(--surface);border:1px solid var(--border);color:var(--mut);border-radius:99px;padding:5px 14px;font-size:12px;cursor:pointer;font-weight:600}
 .ftag.active{background:var(--acc);color:var(--on-acc);border-color:var(--acc)}
@@ -88,6 +100,16 @@ button.sec{background:var(--btn-sec);color:var(--fg)}button.sec:hover{background
 .v.ok{color:var(--ok)}.v.warn{color:var(--warn)}.v.err{color:var(--err)}
 .models{margin-top:10px;font-size:12px;color:var(--mut);display:flex;flex-wrap:wrap;gap:6px}
 .model-tag{background:var(--mut-soft);border:1px solid var(--mut-border);color:var(--mut);border-radius:6px;padding:2px 8px;font-size:11px;font-family:ui-monospace,monospace}
+/* 额度进度条（对齐 workbuddy 的 pb-* 语义） */
+.pb{margin-top:10px}
+.pb-label{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--mut);margin-bottom:6px}
+.pb-primary{display:flex;flex:1 1 200px;min-width:0;flex-wrap:wrap}
+.pb-segment + .pb-segment::before{content:" · ";white-space:pre}
+.pb-used{flex:0 0 auto;white-space:nowrap}
+.pb-track{height:8px;background:var(--surface-muted);border-radius:99px;overflow:hidden}
+.pb-bar{height:100%;background:var(--ok);border-radius:99px;transition:width .6s ease}
+.pb-meta{font-size:11px;color:var(--mut);margin-top:6px}
+.pb-empty{font-size:12px;color:var(--mut);margin-top:10px}
 .actions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
 .field-input{flex:1;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--fg);outline:none}
 .field-input:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-ring)}
@@ -131,6 +153,16 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 .model-item{display:block;width:100%;text-align:left;background:var(--btn-sec);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;font-family:ui-monospace,monospace;cursor:pointer;word-break:break-all}
 .model-item:hover{background:var(--btn-sec-hover);border-color:var(--acc)}
 .model-item:disabled{opacity:.5;cursor:default}
+.file-row{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+.file-row .sec{display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin:0}
+.file-list{margin-top:8px;max-height:150px;overflow:auto;border:1px dashed var(--border);border-radius:8px;padding:6px 10px;display:none}
+.file-list.show{display:block}
+.file-item{display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:12px;border-bottom:1px dashed var(--border)}
+.file-item:last-child{border-bottom:0}
+.file-item .fn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-item .fs{color:var(--mut);flex:none;font-size:11px}
+.file-info{color:var(--mut);font-size:12px;margin-top:6px;line-height:1.45}
+.file-info.bad{color:var(--err)}
 .import-result{margin-top:12px;border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:12px;max-height:160px;overflow:auto;display:none}
 .import-result.show{display:block}
 .import-result .r-hd{font-weight:600;margin-bottom:6px}
@@ -184,7 +216,7 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 <body>
 <div class="wrap">
   <h1>ZCode 账号面板</h1>
-  <div class="sub">Z.ai 官方账号授权 · ZCode 客户端指纹 · 失效自动冷却</div>
+  <div class="sub">Z.ai 官方账号授权 · 每日额度 · ZCode 客户端指纹 · 失效自动冷却</div>
   <div id="authBox" class="card" style="display:none;margin-bottom:16px">
     <div style="margin-bottom:8px;color:var(--mut)">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
     <div style="display:flex;gap:8px">
@@ -196,10 +228,12 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
     <button id="oauthBtn" onclick="openOAuthBridge()" style="background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border);font-weight:600">OAuth 授权登录</button>
     <button class="sec" id="importBtn" onclick="openImportModal()">导入凭据</button>
     <button class="sec" id="exportBtn" onclick="exportAccounts(this)" title="导出全部账号凭证为 JSON，可直接再导入">导出凭证</button>
+    <button class="sec" id="refreshBtn" onclick="refreshAll(this)" title="重新拉取全部账号的每日额度">刷新额度</button>
     <button class="sec" onclick="setAllStatus(false, this)">全部启用</button>
     <button class="sec" onclick="setAllStatus(true, this)">全部禁用</button>
     <input id="searchInput" class="search" type="search" placeholder="搜索备注 / Key / ID" oninput="onSearchChange(this.value)" autocomplete="off">
-    <button class="sec sort-btn" id="sortBtn" onclick="toggleSort(this)" title="当前：创建时间倒序（新→旧），点击切名称升序">创建 ↓</button>
+    <button class="sec sort-btn" id="sortBtn" onclick="toggleSort(this)" title="当前：创建时间倒序（新→旧），点击切额度升序">创建 ↓</button>
+    <span class="toggle ref-progress" id="refreshProgress" style="display:none"></span>
   </div>
   <div class="filter-bar" id="filterBar">
     <button type="button" class="ftag active" data-state="all" onclick="filterState('all',this)">全部 <span class="cnt" id="cntAll">0</span></button>
@@ -220,6 +254,13 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
     <div class="modal-bd">
       <p class="hint">支持每行一个 ZCode JWT Token、Z.ai Access Token 或 BigModel API Key；可用 <code>TOKEN----备注</code> 追加备注；亦可直接粘贴整段导出凭据 JSON。落盘为 <code>zcode-&lt;hash8&gt;.json</code>。</p>
       <textarea id="importRaw" rows="8" placeholder="粘贴 Token、API Key 或 JSON 凭据，或每行一个：&#10;eyJhbGciOi...----我的账号1"></textarea>
+      <div class="file-row">
+        <label class="sec" for="importFiles" title="可一次选择多个 .json 凭证文件">📁 选择 JSON 凭证文件</label>
+        <input type="file" id="importFiles" multiple accept=".json,application/json" hidden>
+        <button type="button" class="sec" id="clearImportFiles" onclick="clearImportFiles()" style="display:none">清除</button>
+      </div>
+      <div class="file-list" id="importFileList"></div>
+      <div class="file-info" id="importFileInfo"></div>
       <div class="import-result" id="importResult"></div>
     </div>
     <div class="modal-ft">
@@ -355,38 +396,62 @@ function fmtCST(s){
   if(isNaN(d.getTime())) return String(s);
   return d.toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}).replaceAll("/","-");
 }
+// 额度数字千分位（token 数常达百万级）。
+function fmtNum(n){
+  const v=Number(n);
+  if(!isFinite(v)) return "0";
+  return v.toLocaleString("en-US");
+}
+// 大额缩写：1234567 → 1.23M，便于进度条标签紧凑展示。
+function fmtCompact(n){
+  const v=Number(n);
+  if(!isFinite(v)) return "0";
+  if(v>=1e9) return (v/1e9).toFixed(2)+"B";
+  if(v>=1e6) return (v/1e6).toFixed(2)+"M";
+  if(v>=1e3) return (v/1e3).toFixed(1)+"K";
+  return String(v);
+}
 
 let authFailCount=0;
 let authFailUntil=0;
 async function api(path, opts={}){
-  const k=getKey()||(document.getElementById("keyInput")||{}).value;
-  if(!k){ showAuth(); throw new Error("需要管理密钥"); }
+  // __silent：后台静默请求（定时刷新 / 状态轮询）。失败不得累加全局失败计数、
+  // 不得清 key、不得弹鉴权框 —— 否则 2s 一次的 /refresh/status 轮询会在几秒内
+  // 打满阈值，把一次局部故障放大成「所有请求中断 60s」。
+  const silent=!!opts.__silent;
   const {__silent=false, ...rest}=opts;
+  const k=getKey()||(document.getElementById("keyInput")||{}).value;
+  if(!k){ if(!silent) showAuth(); throw new Error("需要管理密钥"); }
+  if(Date.now()<authFailUntil){ throw new Error("认证多次失败，请稍后重试（防 IP 封禁）"); }
   const headers={...authHeaders(k.trim?k.trim():k), ...(rest.headers||{})};
   const res=await fetch(API+path, {...rest, headers, cache:"no-store"});
-  const payload=await res.json().catch(()=>({}));
   if(res.status===401||res.status===403){
-    showAuth();
+    if(silent) throw new Error("management key 无效或缺失");
     const now=Date.now();
     if(now<authFailUntil){ authFailCount++; }
     else { authFailCount=1; authFailUntil=now+60000; }
+    showAuth();
     throw new Error(authFailCount>3?"密钥连续错误已暂停，请核对后重试":"管理密钥无效或已失效");
   }
-  if(!res.ok) throw new Error((payload&&payload.error)||("请求失败 "+res.status));
-  return payload;
+  if(!silent) authFailCount=0;
+  if(!res.ok){
+    const payload=await res.json().catch(()=>({}));
+    throw new Error((payload&&payload.error)||("请求失败 "+res.status));
+  }
+  return res.json().catch(()=>({}));
 }
 
 /* ---------- state + render ---------- */
 let lastAccounts=[];
 let currentFilter="all";
 let currentSearch="";
-let currentSort="created_desc"; // "created_desc" | "az" | "za"
-const SORT_LABELS={created_desc:"创建 ↓", az:"名称 ↑", za:"名称 ↓"};
-const SORT_NEXT={created_desc:"az", az:"za", za:"created_desc"};
+let currentSort="created_desc"; // "created_desc" | "quota_asc" | "quota_desc"
+const SORT_LABELS={created_desc:"创建 ↓", quota_asc:"额度 ↑", quota_desc:"额度 ↓"};
+const SORT_NEXT={created_desc:"quota_asc", quota_asc:"quota_desc", quota_desc:"created_desc"};
 const SORT_TITLE={
-  created_desc:"当前：创建时间倒序（新→旧），点击切名称升序",
-  az:"当前：名称升序（A→Z），点击切名称降序",
-  za:"当前：名称降序（Z→A），点击切创建时间倒序"
+  created_desc:"当前：创建时间倒序（新→旧），点击切额度升序",
+  quota_asc:"当前：额度升序（少→多），点击切降序",
+  quota_desc:"当前：额度降序（多→少），点击切创建时间倒序"
 };
 function accountState(a){
   if(a.disabled) return "disabled";
@@ -401,7 +466,13 @@ function stateBadge(a){
   if(st==="cooling") return '<span class="badge cooling" title="命中上游 429/5xx，处于阶梯退避冷却">冷却</span>';
   return '<span class="badge">可用</span>';
 }
-function displayName(a){return a.label||a.api_key_masked||a.auth_id||"未命名"}
+function displayName(a){return a.label||a.username||a.email||a.api_key_masked||a.auth_id||"未命名"}
+// 额度总量口径：全部 entitlement 授予额度合计。
+function quotaTotal(a){
+  const q=a&&a.quota;
+  if(!q) return -1; // 未知额度排在"最少"端
+  return Number(q.total_grant)||0;
+}
 function sortedAccounts(accounts){
   const list=accounts||[];
   if(currentSort==="created_desc"){
@@ -411,8 +482,29 @@ function sortedAccounts(accounts){
       return yt-xt;
     });
   }
-  const dir=currentSort==="az"?1:-1;
-  return [...list].sort((x,y)=>dir*String(displayName(x)).localeCompare(String(displayName(y)),"zh-CN"));
+  const dir=currentSort==="quota_asc"?1:-1;
+  return [...list].sort((x,y)=>dir*(quotaTotal(x)-quotaTotal(y)));
+}
+// 额度进度条：每日额度按 entitlement 展示，无额度数据时提示刷新。
+function quotaHTML(a){
+  const q=a&&a.quota;
+  if(!q||!Array.isArray(q.entitlements)||!q.entitlements.length){
+    return `<div class="pb"><div class="pb-label"><span class="pb-primary"><span class="pb-segment">每日额度</span></span><span class="pb-used"><span class="spin"></span>加载中…</span></div><div class="pb-track"><div class="pb-bar" style="width:0%"></div></div></div>`;
+  }
+  const total=Number(q.total_grant)||0;
+  const segs=q.entitlements.map(e=>{
+    const name=e.show_name||e.capability||"模型";
+    const grant=fmtCompact(e.grant_units);
+    const period=e.period?(" / "+e.period):"";
+    return `<span class="pb-segment">${esc(name)} ${grant}${esc(period)}</span>`;
+  }).join("");
+  const when=q.fetched_at?` · 快照 ${esc(fmtCST(q.fetched_at))}`:"";
+  const plan=q.plan_name?` · ${esc(q.plan_name)}`:"";
+  return `<div class="pb">
+    <div class="pb-label"><span class="pb-primary">${segs}</span><span class="pb-used">合计 ${fmtCompact(total)}</span></div>
+    <div class="pb-track"><div class="pb-bar" style="width:100%"></div></div>
+    <div class="pb-meta">额度合计 ${fmtNum(total)} token${plan}${when}</div>
+  </div>`;
 }
 function card(a){
   const st=accountState(a);
@@ -422,17 +514,20 @@ function card(a){
   const toggleBtn=a.disabled
     ? `<button class="sec" data-action="enable" data-auth-index="${esc(a.auth_id)}">启用</button>`
     : `<button class="sec" data-action="disable" data-auth-index="${esc(a.auth_id)}">禁用</button>`;
-  const titleName = a.label || a.username || a.email || a.auth_id || "未命名";
-  return `<div class="card" data-state="${st}" data-auth="${esc(a.auth_id)}" data-name="${esc(titleName)}" data-search="${esc(((a.label||"")+" "+(a.username||"")+" "+(a.email||"")+" "+(a.user_id||"")+" "+(a.api_key_masked||"")+" "+(a.auth_id||"")).toLowerCase())}">
-  <h2><span class="name" title="${esc(titleName)}">${esc(titleName)}</span> <span style="display:flex;gap:6px;align-items:center;flex:none">${stateBadge(a)}<button type="button" class="card-del" data-action="delete" data-auth-index="${esc(a.auth_id)}" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>
+  const titleName = displayName(a);
+  const planBadge=a.quota&&a.quota.plan_name?`<span class="badge plan" title="${esc(a.quota.plan_name)}">${esc(a.quota.plan_name)}</span>`:"";
+  return `<div class="card" data-state="${st}" data-auth="${esc(a.auth_id)}" data-name="${esc(titleName)}" data-quota="${quotaTotal(a)}" data-search="${esc(((a.label||"")+" "+(a.username||"")+" "+(a.email||"")+" "+(a.user_id||"")+" "+(a.api_key_masked||"")+" "+(a.auth_id||"")).toLowerCase())}">
+  <h2><span class="name" title="${esc(titleName)}">${esc(titleName)}</span> <span style="display:flex;gap:6px;align-items:center;flex:none">${stateBadge(a)}${planBadge}<button type="button" class="card-del" data-action="delete" data-auth-index="${esc(a.auth_id)}" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>
   <div class="uid" title="${esc(a.auth_id||"")}">${esc(a.auth_id||"")}</div>
   <div class="row"><span class="k">访问令牌</span><span class="v mono" title="已脱敏">${esc(a.api_key_masked||"-")}</span></div>
   ${a.user_id?`<div class="row"><span class="k">用户ID</span><span class="v mono">${esc(a.user_id)}</span></div>`:""}
   ${a.email?`<div class="row"><span class="k">邮箱</span><span class="v">${esc(a.email)}</span></div>`:""}
   ${a.created_at?`<div class="row"><span class="k">创建</span><span class="v mono">${esc(fmtCST(a.created_at))}</span></div>`:""}
   ${a.expires_at?`<div class="row"><span class="k">过期</span><span class="v mono">${esc(fmtCST(a.expires_at))}</span></div>`:""}
+  ${quotaHTML(a)}
   <div class="models">${modelTags}${more}</div>
   <div class="actions">
+    <button class="sec" data-action="quota" data-auth-index="${esc(a.auth_id)}" title="刷新该账号的每日额度">刷新额度</button>
     <button class="sec" data-action="test" data-auth-index="${esc(a.auth_id)}" title="选择模型发送一次真实推理请求">测试</button>
     ${toggleBtn}
   </div>
@@ -440,7 +535,7 @@ function card(a){
 }
 function renderGrid(){
   const g=document.getElementById("grid");
-  if(!lastAccounts.length){ g.innerHTML='<div class="loading">暂无账号，点上方「导入 Key」添加。</div>'; renderSummary([]); return; }
+  if(!lastAccounts.length){ g.innerHTML='<div class="loading">暂无账号，点上方「导入 Key」或「OAuth 授权登录」添加。</div>'; renderSummary([]); return; }
   g.innerHTML=sortedAccounts(lastAccounts).map(card).join("");
   bindCardActions(g);
   applyCardVisibility();
@@ -457,6 +552,7 @@ function bindCardActions(root){
       else if(act==="enable") setStatus(id,false,ev.currentTarget);
       else if(act==="disable") setStatus(id,true,ev.currentTarget);
       else if(act==="delete") openDeleteModal(id);
+      else if(act==="quota") refreshQuota(id,ev.currentTarget);
     });
   });
 }
@@ -472,6 +568,7 @@ function applyCardVisibility(){
 function onSearchChange(q){
   currentSearch=(q==null?"":String(q)).trim().toLowerCase();
   applyCardVisibility();
+  renderSummary(lastAccounts);
 }
 function filterState(state, btn){
   currentFilter=state;
@@ -480,44 +577,13 @@ function filterState(state, btn){
   renderSummary(lastAccounts);
 }
 function toggleSort(btn){
-  currentSort=SORT_NEXT[currentSort]||"az";
+  currentSort=SORT_NEXT[currentSort]||"quota_asc";
   if(btn){
     btn.textContent=SORT_LABELS[currentSort];
     btn.title=SORT_TITLE[currentSort];
     btn.classList.toggle("active", currentSort!=="created_desc");
   }
   renderGrid();
-}
-function renderSummary(accounts){
-  const box=document.getElementById("summaryBox");
-  if(!box) return;
-  const all=accounts||[];
-  updateFilterCounts(all);
-  if(!all.length){ box.style.display="none"; box.innerHTML=""; return; }
-  let availN=0, disabledN=0, testN=0, coolingN=0, modelN=0;
-  all.forEach(a=>{
-    const st=accountState(a);
-    if(st==="available") availN++;
-    else if(st==="disabled") disabledN++;
-    else if(st==="test") testN++;
-    else if(st==="cooling") coolingN++;
-    modelN+=(Array.isArray(a.models)?a.models.length:0);
-  });
-  const scopeLabel={all:"全部账号",available:"可用账号",disabled:"禁用账号",test:"测试账号",cooling:"冷却账号"}[currentFilter]||"全部账号";
-  box.style.display="block";
-  box.innerHTML=`
-    <div class="summary-hd">
-      <div class="summary-title">账号概览 · ${esc(scopeLabel)}</div>
-      <div class="summary-meta">${all.length} 个账号 · 可用 ${availN} · 禁用 ${disabledN} · 测试 ${testN} · 冷却 ${coolingN}</div>
-    </div>
-    <div class="summary-grid">
-      <div class="summary-item"><div class="k">总账号数</div><div class="v">${all.length}</div></div>
-      <div class="summary-item"><div class="k">可用(承载流量)</div><div class="v ok">${availN}</div></div>
-      <div class="summary-item"><div class="k">禁用</div><div class="v muted">${disabledN}</div></div>
-      <div class="summary-item"><div class="k">测试失败</div><div class="v ${testN?"err":""}">${testN}</div></div>
-      <div class="summary-item"><div class="k">冷却中</div><div class="v ${coolingN?"warn":""}">${coolingN}</div></div>
-      <div class="summary-item"><div class="k">模型条目</div><div class="v">${modelN}</div></div>
-    </div>`;
 }
 function updateFilterCounts(all){
   const counts={all:all.length,available:0,disabled:0,test:0,cooling:0};
@@ -526,44 +592,334 @@ function updateFilterCounts(all){
   set("cntAll",counts.all);set("cntAvailable",counts.available);
   set("cntDisabled",counts.disabled);set("cntTest",counts.test);set("cntCooling",counts.cooling);
 }
+function renderSummary(accounts){
+  const box=document.getElementById("summaryBox");
+  if(!box) return;
+  const all=accounts||[];
+  updateFilterCounts(all);
+  if(!all.length){ box.style.display="none"; box.innerHTML=""; return; }
+  let availN=0, disabledN=0, testN=0, coolingN=0, modelN=0, quotaTotalSum=0, quotaKnownN=0;
+  all.forEach(a=>{
+    const st=accountState(a);
+    if(st==="available") availN++;
+    else if(st==="disabled") disabledN++;
+    else if(st==="test") testN++;
+    else if(st==="cooling") coolingN++;
+    modelN+=(Array.isArray(a.models)?a.models.length:0);
+    const qt=quotaTotal(a);
+    if(qt>=0){ quotaTotalSum+=qt; quotaKnownN++; }
+  });
+  const scopeLabel={all:"全部账号",available:"可用账号",disabled:"禁用账号",test:"测试账号",cooling:"冷却账号"}[currentFilter]||"全部账号";
+  const unknownN=all.length-quotaKnownN;
+  box.style.display="block";
+  box.innerHTML=`
+    <div class="summary-hd">
+      <div class="summary-title">额度汇总 · ${esc(scopeLabel)}</div>
+      <div class="summary-meta">${all.length} 个账号 · 可用 ${availN} · 禁用 ${disabledN} · 测试 ${testN} · 冷却 ${coolingN}</div>
+    </div>
+    <div class="summary-grid">
+      <div class="summary-item"><div class="k">总账号数</div><div class="v">${all.length}</div></div>
+      <div class="summary-item"><div class="k">可用(承载流量)</div><div class="v ok">${availN}</div></div>
+      <div class="summary-item"><div class="k">每日额度合计</div><div class="v">${quotaKnownN?fmtCompact(quotaTotalSum):"-"}</div></div>
+      <div class="summary-item"><div class="k">额度已获取</div><div class="v muted">${quotaKnownN}${unknownN?" / 未知 "+unknownN:""}</div></div>
+      <div class="summary-item"><div class="k">测试失败</div><div class="v ${testN?"err":""}">${testN}</div></div>
+      <div class="summary-item"><div class="k">模型条目</div><div class="v">${modelN}</div></div>
+    </div>
+    ${quotaKnownN?`<div class="pb-meta">额度合计 ${fmtNum(quotaTotalSum)} token/周期（各账号每日授予额度之和，随上游计划变化）</div>`:""}`;
+}
+// 局部替换单卡（额度刷新后避免整页重排，保持滚动位置）。
+function updateOneCard(a){
+  const el=document.querySelector(`#grid .card[data-auth="${CSS.escape(a.auth_id)}"]`);
+  if(!el) return;
+  if(currentSort!=="created_desc"){ renderGrid(); return; }
+  const tmp=document.createElement("div");
+  tmp.innerHTML=card(a);
+  if(tmp.firstChild){
+    const newCard=tmp.firstChild;
+    el.replaceWith(newCard);
+    bindCardActions(newCard);
+  }
+  renderSummary(lastAccounts);
+}
 
 /* ---------- data loading ---------- */
 async function load(opts={}){
+  const g=document.getElementById("grid");
+  if(!getKey()){
+    showAuth();
+    if(!lastAccounts.length) g.innerHTML='<div class="loading">请先填写 management key</div>';
+    return;
+  }
   let d;
   try{ d=await api("/accounts", opts); }
-  catch(e){ if(!opts.__silent) toast("加载失败","err",e.message); throw e; }
-  lastAccounts=Array.isArray(d.accounts)?d.accounts:[];
+  catch(e){
+    if(!opts.__silent) toast("加载失败","err",e.message);
+    if(!lastAccounts.length) g.innerHTML='<div class="loading">'+esc(e.message)+"</div>";
+    return;
+  }
+  const accounts=Array.isArray(d.accounts)?d.accounts:[];
+  // 后台刷新期间可能瞬时返回空列表；抹掉网格会被用户感知为「数据被清空」。
+  if(!accounts.length&&lastAccounts.length){
+    if(!opts.__silent) toast("账号列表暂时为空，已保留上次数据","warn","");
+    return;
+  }
+  lastAccounts=accounts;
   renderGrid();
-  return d;
 }
 async function enterPanel(){
-  try{ await load(); }catch(e){}
+  await load();
+  startBackgroundRefresh();
+}
+
+/* ---------- background quota refresh ---------- */
+// 每 10 分钟自动触发一轮后台额度刷新（幂等，前端无感知）。
+const PERIODIC_REFRESH_MS=10*60*1000;
+setInterval(()=>{ startBackgroundRefresh(); }, PERIODIC_REFRESH_MS);
+async function startBackgroundRefresh(){
+  let d;
+  try{ d=await api("/refresh", {method:"POST", __silent:true}); }
+  catch(e){ return; } // 静默：后台刷新失败不打扰用户
+  if(d&&d.error) return;
+  pollRefreshStatus();
+}
+function updateRefreshProgress(d){
+  const el=document.getElementById("refreshProgress");
+  if(!el) return;
+  const total=Number(d.total||0), done=Number(d.done||0), failed=Number(d.failed||0);
+  if(!total||!d.running){ el.style.display="none"; el.textContent=""; return; }
+  el.style.display="inline-block";
+  el.textContent="额度刷新中 "+done+"/"+total+(failed?" · 失败 "+failed:"");
+}
+function setCardRefreshState(authID, state, error){
+  if(!authID) return;
+  const el=document.querySelector(`#grid .card[data-auth="${CSS.escape(String(authID))}"]`);
+  if(!el) return;
+  if(!state){
+    delete el.dataset.refreshState;
+    const tag=el.querySelector(".ref-tag");
+    if(tag) tag.remove();
+    return;
+  }
+  el.dataset.refreshState=state;
+  let tag=el.querySelector(".ref-tag");
+  if(tag) tag.remove();
+  if(state==="running"||state==="pending"||state==="failed"){
+    tag=document.createElement("span");
+    tag.className="ref-tag ref-"+state;
+    if(state==="running") tag.innerHTML='<span class="spin"></span>刷新中…';
+    else if(state==="pending") tag.textContent="等待中…";
+    else tag.textContent="⚠️ "+(error||"刷新失败");
+    const holder=el.querySelector("h2 > span");
+    if(holder) holder.insertBefore(tag, holder.firstChild);
+  }
+}
+function finalizeCardState(authID, state, error){
+  setCardRefreshState(authID, state, error);
+  if(state==="done") setTimeout(()=>setCardRefreshState(authID,null),1500);
+  else if(state==="failed") setTimeout(()=>setCardRefreshState(authID,null),8000);
+}
+let refreshPollTimer=null;
+let refreshSeen={};
+// 后台刷新轮询：每 2s 查一次 /refresh/status，逐账号拉取最新额度，!running 时停止。
+function pollRefreshStatus(){
+  if(refreshPollTimer){ clearInterval(refreshPollTimer); refreshPollTimer=null; }
+  refreshSeen={};
+  const stop=()=>{
+    if(refreshPollTimer){ clearInterval(refreshPollTimer); refreshPollTimer=null; }
+    refreshSeen={};
+    updateRefreshProgress({total:0});
+  };
+  let tickBusy=false;
+  const tick=async ()=>{
+    if(tickBusy) return;
+    tickBusy=true;
+    try{
+      let d;
+      try{ d=await api("/refresh/status", {__silent:true}); }
+      catch(e){ stop(); return; }
+      updateRefreshProgress(d);
+      (d.per_account||[]).forEach(pa=>{
+        const id=pa.auth_index;
+        const st=pa.status;
+        if(st==="done"||st==="failed"){
+          if(refreshSeen[id]) return;
+          refreshSeen[id]=true;
+          fetchAndPatchQuota(id, {__silent:true})
+            .catch(()=>{})
+            .then(()=>finalizeCardState(id, st, pa.error));
+        }else if(st==="running"||st==="pending"){
+          setCardRefreshState(id, st, pa.error);
+        }
+      });
+      if(!d.running) stop();
+    }finally{
+      tickBusy=false;
+    }
+  };
+  tick();
+  refreshPollTimer=setInterval(tick, 2000);
+}
+// 拉取单账号额度并合并进本地态 + 局部重绘（不 toast、不 busy）。
+async function fetchAndPatchQuota(authID, opts={}){
+  const d=await api(`/quota?auth_index=${encodeURIComponent(authID)}&force=1`, opts);
+  const acct=(d.accounts||[])[0]||{};
+  if(d.error||acct.error) throw new Error(d.error||acct.error||"未知错误");
+  const a=(lastAccounts||[]).find(x=>x.auth_id===authID);
+  if(a&&acct.quota){
+    a.quota=acct.quota;
+    updateOneCard(a);
+  }
+  return acct;
+}
+async function refreshAll(btn){
+  busy(btn,true);
+  try{
+    const d=await api("/refresh",{method:"POST"});
+    if(d&&d.error){ toast("刷新失败","err",d.error); return; }
+    toast("已开始刷新额度","ok",(d.total||0)+" 个账号");
+    pollRefreshStatus();
+  }catch(e){ toast("刷新失败","err",e.message); }
+  finally{ busy(btn,false); }
+}
+async function refreshQuota(authID, btn){
+  busy(btn,true);
+  try{
+    const acct=await fetchAndPatchQuota(authID);
+    const who=acct&&acct.quota?acct.quota.plan_name:authID;
+    const total=acct&&acct.quota?fmtCompact(acct.quota.total_grant):"?";
+    toast("额度已刷新","ok",who+" · 合计 "+total);
+  }catch(e){ toast("刷新失败","err",e.message); }
+  finally{ busy(btn,false); }
 }
 
 /* ---------- account actions ---------- */
 function openImportModal(){
   document.getElementById("importRaw").value="";
   const r=document.getElementById("importResult"); r.className="import-result"; r.innerHTML="";
+  clearImportFiles();
   document.getElementById("importModal").classList.add("show");
+  const ta=document.getElementById("importRaw");
+  if(ta) setTimeout(()=>ta.focus(),0);
 }
 function closeImportModal(){document.getElementById("importModal").classList.remove("show")}
 function onImportMaskClick(ev){if(ev.target&&ev.target.id==="importModal")closeImportModal()}
 function openOAuthBridge(){
   window.open("/v0/resource/plugins/zcode-provider/oauth-bridge", "_blank");
 }
+/* ---------- 多文件批量导入（参照 workbuddy） ----------
+   每个选中文件经同一个 /import 端点导入（一次一文件，串行）。导出文件
+   （数组或 {accounts:[...]} 包装）会被展开为逐条凭据，复用同一导入管线。
+*/
+let importQueue=[]; // {name,text}
+const MAX_IMPORT_FILE=2*1024*1024;
+function clearImportFiles(){
+  importQueue=[];
+  const fi=document.getElementById("importFiles"); if(fi) fi.value="";
+  const fl=document.getElementById("importFileList"); if(fl){fl.innerHTML="";fl.classList.remove("show");}
+  const info=document.getElementById("importFileInfo"); if(info){info.textContent="";info.className="file-info";}
+  const cb=document.getElementById("clearImportFiles"); if(cb) cb.style.display="none";
+}
+// 把一段文本规范化为逐条凭据：支持裸对象、数组、导出包装（accounts[].credential）。
+function expandCredentials(text){
+  let obj;
+  try{obj=JSON.parse(text)}catch(_){return null}
+  if(!obj||typeof obj!=="object") return null;
+  const out=[];
+  const push=(c)=>{if(c&&typeof c==="object"&&!Array.isArray(c))out.push(c)};
+  if(Array.isArray(obj)){
+    obj.forEach(push);
+  }else if(Array.isArray(obj.accounts)){
+    obj.accounts.forEach(a=>{
+      if(a&&a.credential&&typeof a.credential==="object") out.push(a.credential);
+      else push(a);
+    });
+  }else{
+    push(obj);
+  }
+  return out;
+}
+// 粘贴框内容 → 逐条导入项（多行 Token 形式按原样交给后端逐行解析）。
+function queuedImportItems(rawText){
+  const items=[];
+  if(!rawText) return items;
+  const expanded=expandCredentials(rawText);
+  if(expanded&&expanded.length){
+    expanded.forEach((c,i)=>items.push({name:expanded.length>1?"(粘贴) #"+(i+1):"(粘贴)", text:JSON.stringify(c)}));
+  }else{
+    items.push({name:"(粘贴)", text:rawText});
+  }
+  return items;
+}
+document.getElementById("importFiles").addEventListener("change",async e=>{
+  const input=e.target;
+  const fs=[...(input.files||[])];
+  input.value="";
+  importQueue=[];
+  const list=document.getElementById("importFileList");
+  const info=document.getElementById("importFileInfo");
+  const clearBtn=document.getElementById("clearImportFiles");
+  list.innerHTML="";
+  let skipped=0;
+  for(const f of fs){
+    if(!(/\.json$/i.test(f.name)||f.type==="application/json")){skipped++;continue}
+    if(f.size>MAX_IMPORT_FILE){skipped++;continue}
+    try{
+      const text=await f.text();
+      if(!text.trim()){skipped++;continue}
+      const expanded=expandCredentials(text);
+      if(expanded&&expanded.length){
+        expanded.forEach((c,i)=>{
+          importQueue.push({name:expanded.length>1?f.name+" #"+(i+1):f.name, text:JSON.stringify(c)});
+        });
+      }else{
+        importQueue.push({name:f.name,text});
+      }
+      const d=document.createElement("div");
+      d.className="file-item";
+      d.innerHTML='<span class="fn">'+esc(f.name)+'</span><span class="fs">'+(f.size/1024).toFixed(1)+' KB</span>';
+      list.appendChild(d);
+    }catch(_){skipped++}
+  }
+  list.classList.toggle("show",importQueue.length>0);
+  clearBtn.style.display=importQueue.length?"inline-block":"none";
+  if(importQueue.length){
+    info.textContent="已选 "+importQueue.length+" 个凭证项"+(skipped?"，跳过 "+skipped+" 个文件（非 .json / 超 2MB / 空内容）":"");
+    info.className="file-info"+(skipped?" bad":"");
+  }else{
+    info.textContent=fs.length?("没有可导入的文件"+(skipped?"（跳过 "+skipped+" 个）":"")):"";
+    info.className="file-info bad";
+  }
+});
+// 单条导入（后端 /import 接受每行一个凭据；这里逐条串行以避免一次解析歧义）。
+async function importOne(text){
+  return api("/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:text})});
+}
 async function submitImport(btn){
   const raw=document.getElementById("importRaw").value.trim();
   const box=document.getElementById("importResult");
-  if(!raw){ box.className="import-result show"; box.innerHTML='<div class="r-hd err">请先粘贴凭据内容</div>'; return; }
+  const items=queuedImportItems(raw);
+  for(const f of importQueue) items.push(f);
+  if(!items.length){ box.className="import-result show"; box.innerHTML='<div class="r-hd err">请先粘贴凭据内容或选择凭证文件</div>'; return; }
   busy(btn,true);
   try{
-    const d=await api("/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:raw})});
-    const errs=Array.isArray(d.errors)?d.errors:[];
+    let imported=0, skipped=0, errs=[];
+    for(let i=0;i<items.length;i++){
+      if(items.length>1) btn.innerHTML='<span class="spin"></span>导入中 '+(i+1)+'/'+items.length;
+      try{
+        const d=await importOne(items[i].text);
+        imported+=Number(d.imported||0);
+        skipped+=Number(d.skipped||0);
+        if(Array.isArray(d.errors)) errs=errs.concat(d.errors);
+        if(d.error) errs.push(items[i].name+": "+d.error);
+      }catch(e){ errs.push(items[i].name+": "+e.message); }
+    }
     box.className="import-result show";
-    box.innerHTML=`<div class="r-hd ${errs.length?"err":"ok"}">导入完成：成功 ${d.imported||0} · 跳过 ${d.skipped||0}${errs.length?" · 失败 "+errs.length:""}</div>`+
+    box.innerHTML=`<div class="r-hd ${errs.length?"err":"ok"}">导入完成：成功 ${imported} · 跳过 ${skipped}${errs.length?" · 失败 "+errs.length:""}</div>`+
       errs.map(e=>`<div style="color:var(--err)">${esc(e)}</div>`).join("");
-    toast("导入完成","ok","成功 "+(d.imported||0)+" 个账号");
+    toast("导入完成","ok","成功 "+imported+" 个账号");
+    if(!errs.length){ clearImportFiles(); document.getElementById("importRaw").value=""; }
     await load({__silent:true});
+    startBackgroundRefresh();
   }catch(e){ box.className="import-result show"; box.innerHTML=`<div class="r-hd err">导入失败：${esc(e.message)}</div>`; }
   finally{ busy(btn,false); }
 }
@@ -604,6 +960,8 @@ let pendingDeleteId="";
 function openDeleteModal(authId){
   pendingDeleteId=authId;
   const a=(lastAccounts||[]).find(x=>x.auth_id===authId);
+  // 防御性复位：弹窗 DOM 复用，残留的处理中状态会阻塞下一次删除。
+  busy(document.getElementById("deleteConfirmBtn"),false);
   document.getElementById("deleteModalHint").textContent="确定要删除「"+(a?displayName(a):authId)+"」吗？";
   document.getElementById("deleteModal").classList.add("show");
 }
@@ -617,10 +975,11 @@ async function confirmDeleteAccount(){
   try{
     await api("/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({auth_id:id})});
     toast("账号已删除","ok");
+    busy(btn,false);
     closeDeleteModal();
+    lastAccounts=(lastAccounts||[]).filter(x=>x.auth_id!==id);
     await load({__silent:true});
-  }catch(e){ toast("删除失败","err",e.message); }
-  finally{ busy(btn,false); }
+  }catch(e){ toast("删除失败","err",e.message); busy(btn,false); }
 }
 /* ---------- active test ---------- */
 let pendingTestId="";
@@ -653,6 +1012,7 @@ async function loadTestModels(authId){
       return;
     }
   }
+  if(pendingTestId!==authId) return; // 用户已关闭或切换账号，丢弃过期响应
   if(!models.length){ list.innerHTML='<div class="loading">暂无可用模型</div>'; return; }
   list.innerHTML=models.map((m,i)=>`<button type="button" class="model-item" data-model="${esc(m)}"${i===0?' data-first="1"':''}>${esc(m)}</button>`).join("");
   list.querySelectorAll(".model-item").forEach(b=>{
@@ -692,6 +1052,15 @@ async function runTestModel(authId, model, btn){
 })();
 // 每 60s 静默刷新一次账号状态（冷却/探活标签会随时间自然变化）。
 setInterval(()=>{ if(getKey()) load({__silent:true}).catch(()=>{}); }, 60000);
+// Esc 关闭当前弹窗。
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Escape") return;
+  ["importModal","deleteModal","testModal"].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el&&el.classList.contains("show")) el.classList.remove("show");
+  });
+});
+document.getElementById("keyInput").addEventListener("keydown",e=>{if(e.key==="Enter")saveKey()});
 </script>
 </body>
 </html>

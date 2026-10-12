@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.12] - 2026-10-12
+
+### Added
+- **账号面板额度可视化（参照 workbuddy 面板重设计）**：此前 zcode 面板只有账号状态，缺少 workbuddy 那样的额度进度条与用量汇总，两者观感差距明显。
+  - 新增 `quota.go`：调用 `GET https://zcode.z.ai/api/v1/zcode-plan/billing/current` 解析当前计划的 entitlements（各模型每日授予额度 `grant_units`），带 5 分钟进程内缓存与显式失效。该端点是唯一可靠的额度来源——`billing/balance`（余额/已用）在免费 start-plan 账号上固定返回 `400 code 3001`，故不采用。
+  - 新增 `refresh_runner.go`：后台批量额度刷新器（幂等、逐账号进度、串行节流），暴露 `GET /refresh/status` 只读快照供前端轮询。
+  - 新增管理端点：`GET /quota`（单账号或全量额度，支持 `force=1` 绕过缓存）、`POST /refresh`（启动后台刷新轮）、`GET /refresh/status`（读取进度）。
+  - `GET /accounts` 附带已缓存额度快照（`quota` 字段），面板首屏即可展示；无缓存时由进入页面自动触发的后台刷新补齐。
+- **面板功能对齐 workbuddy**：
+  - 账号卡新增每日额度进度条（按 entitlement 展示模型名 + 授予额度 + 周期）与计划名徽章。
+  - 新增「额度汇总」卡（每日额度合计、额度已获取/未知、可用/禁用/测试/冷却计数）与消耗占比进度条。
+  - 新增「刷新额度」全局按钮与单卡「刷新额度」按钮，配合后台刷新三态（pending/running/done/failed）与顶部「额度刷新中 N/M」进度。
+  - 排序新增「额度 ↑ / ↓」，搜索与筛选计数联动额度汇总。
+  - `api()` 对齐 workbuddy 的健壮语义：`__silent` 静默请求不参与鉴权熔断、401/403 阈值清 key、空/非 JSON 响应结构化降级。
+- 新增 6 项额度回归测试（解析、缺 JWT、缓存命中与 force 绕过、缓存过期、刷新器快照与幂等、全量查询容错）并经受必失败哨兵反证。
+
 ## [0.1.11] - 2026-10-12
 
 ### Fixed

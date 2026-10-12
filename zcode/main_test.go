@@ -40,8 +40,8 @@ func TestMain_RegistrationAndCapabilities(t *testing.T) {
 	if reg.Metadata.Name != providerName {
 		t.Fatalf("expected name %s, got %s", providerName, reg.Metadata.Name)
 	}
-	if reg.Metadata.Version != "0.1.11" {
-		t.Fatalf("expected version 0.1.11, got %s", reg.Metadata.Version)
+	if reg.Metadata.Version != "0.1.12" {
+		t.Fatalf("expected version 0.1.12, got %s", reg.Metadata.Version)
 	}
 	if !reg.Capabilities.AuthProvider {
 		t.Fatalf("expected AuthProvider capability to be true for OAuth login")

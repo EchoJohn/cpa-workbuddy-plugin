@@ -68,6 +68,9 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: base + "/disable-all", Description: "Disable all ZCode accounts."},
 			{Method: http.MethodGet, Path: base + "/models", Description: "List models available for one account."},
 			{Method: http.MethodPost, Path: base + "/test-active", Description: "Send an active ping chat inference request for one account."},
+			{Method: http.MethodGet, Path: base + "/quota", Description: "Query plan quota for one account or all accounts."},
+			{Method: http.MethodPost, Path: base + "/refresh", Description: "Start a background quota refresh round for all accounts."},
+			{Method: http.MethodGet, Path: base + "/refresh/status", Description: "Read background quota refresh progress."},
 		},
 		Resources: []resourceRoute{
 			{Path: "/panel", Menu: "ZCode", Description: "ZCode Provider dashboard: accounts, models, import, active test."},
@@ -92,6 +95,8 @@ type accountSummary struct {
 	CreatedAt    string   `json:"created_at"`
 	UpdatedAt    string   `json:"updated_at"`
 	Models       []string `json:"models"`
+	// Quota 是已缓存的额度快照；无缓存时为 null，由面板进入时触发的后台刷新补齐。
+	Quota *zcodeQuotaSnapshot `json:"quota,omitempty"`
 }
 
 func normalizeMgmtSubPath(rawPath string) (string, url.Values) {
@@ -206,6 +211,19 @@ func handleManagement(raw []byte) ([]byte, error) {
 		}
 		return makeHTTPResponse(http.StatusOK, data)
 
+	case method == http.MethodGet && subPath == "/quota":
+		authID := getQueryParam("auth_index")
+		if authID == "" {
+			authID = getQueryParam("auth_id")
+		}
+		return handleQuotaQuery(authID, getQueryParam("force") == "1" || getQueryParam("force") == "true")
+
+	case method == http.MethodPost && subPath == "/refresh":
+		return handleRefreshStart()
+
+	case method == http.MethodGet && subPath == "/refresh/status":
+		return handleRefreshStatus()
+
 	default:
 		return makeHTTPResponse(http.StatusNotFound, []byte(`{"error":"not_found"}`))
 	}
@@ -250,6 +268,7 @@ func handleListAccounts() ([]byte, error) {
 			CreatedAt:    acc.CreatedAt,
 			UpdatedAt:    acc.UpdatedAt,
 			Models:       models,
+			Quota:        cachedQuota(acc.AuthID),
 		})
 	}
 
@@ -373,6 +392,7 @@ func handleDeleteAccount(body []byte) ([]byte, error) {
 	if err := deleteAuthFileDirect(authID); err != nil {
 		return makeHTTPResponse(http.StatusInternalServerError, []byte(fmt.Sprintf(`{"error":%q}`, err.Error())))
 	}
+	invalidateQuota(authID)
 
 	return makeHTTPResponse(http.StatusOK, []byte(`{"ok":true}`))
 }
@@ -429,4 +449,82 @@ func handleSetAllAccountStatus(disabled bool) ([]byte, error) {
 	}
 
 	return makeHTTPResponse(http.StatusOK, []byte(fmt.Sprintf(`{"ok":true,"updated":%d}`, count)))
+}
+
+// handleQuotaQuery 查询单个账号或全部账号的额度。
+//
+// [参数] authID: 账号标识；为空时查询全部账号；force: true 时跳过缓存强制刷新。
+// [返回] {accounts:[{auth_index, quota|error}]} 或单账号对象。
+func handleQuotaQuery(authID string, force bool) ([]byte, error) {
+	authID = strings.TrimSpace(authID)
+	accounts, err := listAllAuthFiles()
+	if err != nil {
+		return makeHTTPResponse(http.StatusInternalServerError, []byte(fmt.Sprintf(`{"error":%q}`, err.Error())))
+	}
+
+	// 单账号模式：面板单卡刷新使用，返回完整额度或错误。
+	if authID != "" {
+		for _, acc := range accounts {
+			if acc.AuthID != authID {
+				continue
+			}
+			snap, errQuota := quotaForAccount(acc, force)
+			if errQuota != nil {
+				body, _ := json.Marshal(map[string]any{
+					"accounts": []map[string]any{{"auth_index": authID, "error": errQuota.Error()}},
+				})
+				return makeHTTPResponse(http.StatusOK, body)
+			}
+			body, _ := json.Marshal(map[string]any{
+				"accounts": []map[string]any{{"auth_index": authID, "quota": snap}},
+			})
+			return makeHTTPResponse(http.StatusOK, body)
+		}
+		return makeHTTPResponse(http.StatusNotFound, []byte(`{"error":"account not found"}`))
+	}
+
+	// 全量模式：逐账号返回缓存或实时额度，单个失败不影响整体。
+	out := make([]map[string]any, 0, len(accounts))
+	for _, acc := range accounts {
+		snap, errQuota := quotaForAccount(acc, force)
+		if errQuota != nil {
+			out = append(out, map[string]any{"auth_index": acc.AuthID, "error": errQuota.Error()})
+			continue
+		}
+		out = append(out, map[string]any{"auth_index": acc.AuthID, "quota": snap})
+	}
+	body, _ := json.Marshal(map[string]any{"accounts": out})
+	return makeHTTPResponse(http.StatusOK, body)
+}
+
+// handleRefreshStart 启动一轮全量额度后台刷新。
+//
+// [参数] 无。
+// [返回] {queued, total, status}；已有刷新在跑时 queued=false 并返回当前进度。
+func handleRefreshStart() ([]byte, error) {
+	accounts, err := listAllAuthFiles()
+	if err != nil {
+		return makeHTTPResponse(http.StatusInternalServerError, []byte(fmt.Sprintf(`{"error":%q}`, err.Error())))
+	}
+	targets := make([]refreshTarget, 0, len(accounts))
+	for _, acc := range accounts {
+		targets = append(targets, refreshTarget{AuthID: acc.AuthID, Auth: acc})
+	}
+	queued := globalQuotaRefresh.EnqueueAll(targets)
+	body, _ := json.Marshal(map[string]any{
+		"ok":     true,
+		"queued": queued >= 0,
+		"total":  len(targets),
+		"status": globalQuotaRefresh.Snapshot(),
+	})
+	return makeHTTPResponse(http.StatusOK, body)
+}
+
+// handleRefreshStatus 读取后台额度刷新进度。
+//
+// [参数] 无。
+// [返回] refreshSnapshot 视图。
+func handleRefreshStatus() ([]byte, error) {
+	body, _ := json.Marshal(globalQuotaRefresh.Snapshot())
+	return makeHTTPResponse(http.StatusOK, body)
 }
