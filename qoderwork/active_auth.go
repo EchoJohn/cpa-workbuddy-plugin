@@ -178,11 +178,11 @@ func ensureDefaultActiveAuth(accounts []wbAccount) string {
 }
 
 // accountRoutable reports whether an auth ID may carry traffic at all: not
-// cooling down (failover), not test-failed (「测试」标签). Shared by the
-// panel-selection rules and documented as the same predicate family
-// scheduler.pick applies before ordering candidates.
+// cooling down (failover). Shared by the panel-selection rules and documented
+// as the same predicate family scheduler.pick applies before ordering
+// candidates.
 func accountRoutable(authID string) bool {
-	return !isAccountCoolingDown(authID) && !isTestFailed(authID)
+	return !isAccountCoolingDown(authID)
 }
 
 // accountLowerCredits reports whether left has fewer remaining credits than

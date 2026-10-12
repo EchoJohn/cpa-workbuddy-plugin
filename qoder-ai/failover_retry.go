@@ -62,11 +62,6 @@ func pickNextAuth(currentAuthID string) (nextAuthID string, nextSA *storedAuth, 
 		if isAccountCoolingDown(id) {
 			continue
 		}
-		// 「测试」accounts are unusable by product definition — they must not
-		// be picked up as an in-flight retry target either.
-		if isTestFailed(id) {
-			continue
-		}
 		// Skip candidates with no usable auth index — we can't load
 		// their stored body, so retrying on them would fail
 		// identically and burn a budget slot.

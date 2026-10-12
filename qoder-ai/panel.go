@@ -25,7 +25,6 @@ type wbAccount struct {
 	Disabled  bool            `json:"disabled"`
 	Exhausted bool            `json:"exhausted"`
 	Selected  bool            `json:"selected"` // panel active routing card
-	TestFailed bool           `json:"test_failed"` // scheduled active ping failed while credits remain
 	Credits   *creditsSummary `json:"credits,omitempty"`
 	Checkin   *checkinSummary `json:"checkin,omitempty"`
 	Error     string          `json:"error,omitempty"`
@@ -186,25 +185,13 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 	checkinAutoMu.RLock()
 	auto := checkinAuto
 	checkinAutoMu.RUnlock()
-	// Sync the 「测试」mirror BEFORE computing the panel selection, so
-	// ensureDefaultActiveAuth applies the same availability contract as
-	// scheduler.pick. The refresh also prunes entries for accounts that no
-	// longer exist so the scheduler can't pin a session to a deleted auth.
-	refreshTestFailedSetFromDisk()
 	// Ensure default selection for panel + scheduler (lowest-credit available card).
 	activeID := ensureDefaultActiveAuth(out)
-	if force {
-		// Re-mirror so the badge loop below sees any 测试 tag written by
-		// another session since the pre-selection refresh above.
-		refreshTestFailedSetFromDisk()
-	}
 	// Aggregate credits for panel/API consumers (all accounts currently in out).
 	sum := summarizeCredits(out)
-	// Mark selected account in list for UI; test_failed comes from the disk
-	// mirror so the badge always matches the routing contract.
+	// Mark selected account in list for UI.
 	for i := range out {
 		out[i].Selected = out[i].AuthID == activeID
-		out[i].TestFailed = isTestFailed(out[i].AuthID)
 		// Failover state is in-memory only; surface it so the panel can show
 		// consecutive failures + cooldown.
 		if count, until, ok := failoverStateSnapshot(out[i].AuthID); ok && count > 0 {
@@ -221,7 +208,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 		"scheduler_mode": loadedSchedulerMode(),
 		"checkin_auto":   auto,
 		"lifecycle_auto": lifecycleEnabled(),
-		"schedule":       []string{"00:00", "04:00", "08:00", "12:00", "16:00", "20:00"},
+		"schedule":       []string{"10:00", "22:00"},
 		"server_time":    time.Now().Format("2006-01-02 15:04:05"),
 		"summary":        sum,
 	}

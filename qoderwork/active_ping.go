@@ -1,8 +1,9 @@
-// active_ping.go 实现面板「测试」按钮发起的手动活跃推理请求及账号定时自动探活。
+// active_ping.go 实现面板「测试」按钮发起的手动活跃推理请求。
 //
-// 1. 手动测试：点测试按钮 → 弹出模型小窗口 → 点选指定模型（或回退随机模型）→ 发送一次真实推理请求。
-// 2. 自动定时测试：在 refresh_runner 刷新账号积分后触发 triggerActivePing，带 30 分钟节流，
-//    支持最多 5 个模型随机轮测与 30s 熔断保护。
+// 自动定时探活已于 2026-10-12 移除：上游对同账号突发调用限流（返回 110
+// Billing daily count exceeded），每轮 5 模型轮测会稳定触发，且真实推理与
+// 探活共享账号调用配额，故不再由插件主动发起任何推理请求——只保留用户在
+// 面板主动点击「测试」时的单次调用。
 package main
 
 import (
@@ -15,55 +16,15 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
-// defaultActivePingInterval 限制同账号自动定时探活的最小间隔。
-var defaultActivePingInterval = 30 * time.Minute
-
-// defaultActivePingTimeout 限制单次活跃测试请求的最长等待时间。
+// defaultActivePingTimeout 限制单次手动活跃测试请求的最长等待时间。
 var defaultActivePingTimeout = 20 * time.Second
 
-// defaultActivePingMaxBudget 限制整轮自动多模型探活的最大耗时预算。
-var defaultActivePingMaxBudget = 30 * time.Second
-
-// defaultActivePingMaxModels 限制整轮自动探活尝试的最大模型数量。
-var defaultActivePingMaxModels = 5
-
-var (
-	activePingMu        sync.Mutex
-	lastActivePingTimes = make(map[string]time.Time)
-)
-
-var (
-	triggerActivePingFn   = doActivePing
-	sendActivePingQoderFn = sendActivePingQoder
-)
-
-func shouldActivePing(authKey string) bool {
-	activePingMu.Lock()
-	defer activePingMu.Unlock()
-	last, ok := lastActivePingTimes[authKey]
-	if !ok || time.Since(last) >= defaultActivePingInterval {
-		return true
-	}
-	return false
-}
-
-func recordActivePing(authKey string) {
-	activePingMu.Lock()
-	defer activePingMu.Unlock()
-	lastActivePingTimes[authKey] = time.Now()
-}
-
-func resetActivePingTimes() {
-	activePingMu.Lock()
-	defer activePingMu.Unlock()
-	lastActivePingTimes = make(map[string]time.Time)
-}
+var sendActivePingQoderFn = sendActivePingQoder
 
 // pickRandomQoderModels 随机选取指定数量的不重复模型列表供探活与测试。
 // [参数] sa: 账号凭据，用于缓存缺失时拉取可用模型；limit: 期望选取的最大模型数。
@@ -192,83 +153,6 @@ func sendActivePingQoder(sa *storedAuth, chosenModel string) error {
 	return fmt.Errorf("upstream stream closed before first payload")
 }
 
-// doActivePing 自动定时探活主逻辑，支持多模型依次轮测与熔断。
-// [参数] authIndex: 宿主 RPC 索引; authID: 账号唯一标识; sa: 账号凭据对象。
-// [返回] 探活失败时的错误，成功返回 nil。
-// 最近修改时间 2026-10-10（支持最多 5 个模型轮测与 30s 熔断，定时探活）
-func doActivePing(authIndex, authID string, sa *storedAuth) error {
-	if sa == nil {
-		return fmt.Errorf("nil storedAuth")
-	}
-
-	key := strings.TrimSpace(authID)
-	if key == "" {
-		key = strings.TrimSpace(sa.Account.UID)
-	}
-	if key == "" {
-		key = strings.TrimSpace(authIndex)
-	}
-	if key == "" {
-		return fmt.Errorf("empty auth identifier")
-	}
-
-	// 1. 检查 30 分钟节流限制
-	if !shouldActivePing(key) {
-		return nil
-	}
-
-	// 2. 选取最多 5 个模型并设定整轮熔断截止时间
-	models := pickRandomQoderModels(sa, defaultActivePingMaxModels)
-	deadline := time.Now().Add(defaultActivePingMaxBudget)
-	var lastErr error
-	var successModel string
-	success := false
-
-	// 3. 依次测试候选模型，任意一个成功即刻退出
-	for _, m := range models {
-		if time.Now().After(deadline) {
-			break
-		}
-		if err := sendActivePingQoderFn(sa, m); err == nil {
-			success = true
-			successModel = m
-			break
-		} else {
-			lastErr = err
-		}
-	}
-
-	// 4. 处理探活结果
-	if !success {
-		// 定时活跃测试全部失败：仍有积分的账号打 test_failed 标签
-		if idx, idxErr := hostAuthIndexForPhys(key); idxErr == nil {
-			if cr := cachedCredits(authID); cr != nil && cr.TotalRemain > 0 {
-				if tagErr := persistTestFailedToggle(idx, authID, true); tagErr != nil {
-					log.Printf("[qoderwork] test_failed tag %s failed: %v", authID, tagErr)
-				}
-			}
-		}
-		if lastErr == nil {
-			lastErr = fmt.Errorf("active ping timeout after %v", defaultActivePingMaxBudget)
-		}
-		return lastErr
-	}
-
-	recordActivePing(key)
-	// 定时活跃测试成功：清除既有 test_failed 标签
-	if idx, idxErr := hostAuthIndexForPhys(key); idxErr == nil {
-		if err := persistTestFailedToggle(idx, authID, false); err != nil {
-			log.Printf("[qoderwork] test_failed clear %s failed: %v", authID, err)
-		}
-	}
-	log.Printf("[qoderwork] active ping success for %s with model %s", key, successModel)
-	return nil
-}
-
-func triggerActivePing(authIndex, authID string, sa *storedAuth) error {
-	return triggerActivePingFn(authIndex, authID, sa)
-}
-
 // handleTestActive 处理面板「测试」按钮发起的单账号手动活跃推理请求。
 // [参数] req: 管理请求，body 含 auth_index 与可选 model。
 // [返回] 测试结果 map；缺少 auth_index 或凭据不可用时返回 {error}。
@@ -315,7 +199,6 @@ func handleTestActiveWithAuth(sa *storedAuth, authIndex, model string) map[strin
 	if key == "" {
 		key = authIndex
 	}
-	recordActivePing(key)
 	log.Printf("[qoderwork] manual active ping test success for %s with model %s (took %v)", key, chosenModel, elapsed)
 	return map[string]any{
 		"ok":      true,

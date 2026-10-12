@@ -63,7 +63,11 @@ func schedulerLoop(stop chan struct{}) {
 			timer.Stop()
 			return
 		case <-timer.C:
-			runAutoCheckin()
+			// 签到只在 checkinHours 时段触发：nextCheckinTime 取 checkin 与
+			// keepalive 两表并集唤醒，若不门控，签到会在 keepalive 时刻重复执行。
+			if shouldRunCheckinNow(time.Now()) {
+				runAutoCheckin()
+			}
 			// Fire keepalive if the current tick falls within its scheduled
 			// window (e.g. 04:00 keepalive fires on the 04:00 tick even though
 			// the previous checkin tick was 00:00).
@@ -72,6 +76,19 @@ func schedulerLoop(stop chan struct{}) {
 			}
 		}
 	}
+}
+
+// shouldRunCheckinNow reports whether the current local time falls within one
+// hour after any scheduled checkin hour today. Guards runAutoCheckin against
+// the keepalive-only ticks produced by the shared timer schedule.
+func shouldRunCheckinNow(now time.Time) bool {
+	for _, h := range checkinHours {
+		t := time.Date(now.Year(), now.Month(), now.Day(), h, 0, 0, 0, now.Location())
+		if !now.Before(t) && now.Before(t.Add(time.Hour)) {
+			return true
+		}
+	}
+	return false
 }
 
 // runAutoCheckin is the scheduled lifecycle tick (every 4 hours: 00:00 / 04:00 / 08:00 / 12:00 / 16:00 / 20:00).

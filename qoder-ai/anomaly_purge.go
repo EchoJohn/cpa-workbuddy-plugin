@@ -7,9 +7,13 @@
 // purgeLegacyAnomalyFlags strips it once at watchdog startup so the files
 // stay clean.
 //
+// 同一入口还承担旧 `test_failed` 标签的存量清理：自动探活于 2026-10-12 移除后，
+// 该标签不再有任何写入源，若残留在 auth 文件上会让宿主的同名字段语义混乱，
+// 故一并剥离。
+//
 // This file also hosts the shared auth-file error helpers (authFileErr /
 // errAuthIndexRequired / errAuthMissing) salvaged from the removed preserve.go
-// (2026-09-29 移除保号池时随迁)；仍被 counter.go / test_failed_tag.go 引用。
+// (2026-09-29 移除保号池时随迁)；仍被 counter.go / lifecycle.go 引用。
 package main
 
 import (
@@ -37,10 +41,19 @@ func stripAnomalyKey(raw []byte) ([]byte, bool) {
 	if err := json.Unmarshal(raw, &doc); err != nil || doc == nil {
 		return raw, false
 	}
-	if _, ok := doc["anomaly"]; !ok {
+	changed := false
+	if _, ok := doc["anomaly"]; ok {
+		delete(doc, "anomaly")
+		changed = true
+	}
+	// 旧 test_failed 标签同样剥离：自动探活移除后已无任何读取方与写入方。
+	if _, ok := doc["test_failed"]; ok {
+		delete(doc, "test_failed")
+		changed = true
+	}
+	if !changed {
 		return raw, false
 	}
-	delete(doc, "anomaly")
 	out, err := json.Marshal(doc)
 	if err != nil {
 		return raw, false
@@ -48,11 +61,11 @@ func stripAnomalyKey(raw []byte) ([]byte, bool) {
 	return out, true
 }
 
-// purgeLegacyAnomalyFlags walks every qoderwork auth file and strips the dead
-// top-level `anomaly` key. Idempotent: files without the key are never
-// rewritten. Per-file failures are logged and skipped so one bad file cannot
-// block the sweep. Called once from preserveWatchdogLoop startup (after the
-// host is reachable, before the first tick).
+// purgeLegacyAnomalyFlags walks every qoder-ai auth file and strips the dead
+// top-level `anomaly` / `test_failed` keys. Idempotent: files without the keys
+// are never rewritten. Per-file failures are logged and skipped so one bad
+// file cannot block the sweep. Called once from preserveWatchdogLoop startup
+// (after the host is reachable, before the first tick).
 func purgeLegacyAnomalyFlags() {
 	files, err := hostAuthList()
 	if err != nil {

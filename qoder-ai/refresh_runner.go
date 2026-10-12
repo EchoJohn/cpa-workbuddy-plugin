@@ -26,7 +26,6 @@ package main
 
 import (
 	"errors"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -302,9 +301,6 @@ func doFetchOne(authIndex, authID string) error {
 		if strings.Contains(e, "credits:") {
 			return errors.New(e)
 		}
-	}
-	if pingErr := triggerActivePing(authIndex, authID, sa); pingErr != nil {
-		log.Printf("[qoder-ai] active ping account %s warning: %v", authID, pingErr)
 	}
 	return nil
 }

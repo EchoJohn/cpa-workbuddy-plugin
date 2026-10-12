@@ -97,16 +97,15 @@ func handleSchedulerPick(raw []byte) ([]byte, error) {
 	if len(wbCandidates) == 0 {
 		return okEnvelope(pluginapi.SchedulerPickResponse{Handled: false})
 	}
-	// Hard exclusion: 「测试」标签 (scheduled active ping failed while credits
-	// remained) / 冷却 (failover cooldown) accounts never carry traffic. Both
-	// are "not available" by product definition, so they are filtered
-	// unconditionally — there is NO "keep the full list" fallback: when every
+	// Hard exclusion: 冷却 (failover cooldown) accounts never carry traffic —
+	// "not available" by product definition, so they are filtered
+	// unconditionally. There is NO "keep the full list" fallback: when every
 	// candidate is excluded we defer (Handled: false) so the host's built-in
 	// scheduler can fail over to OTHER providers instead of pinning the request
 	// to an account we just declared unusable.
 	available := make([]pluginapi.SchedulerAuthCandidate, 0, len(wbCandidates))
 	for _, c := range wbCandidates {
-		if isTestFailed(c.ID) || isAccountCoolingDown(c.ID) {
+		if isAccountCoolingDown(c.ID) {
 			continue
 		}
 		available = append(available, c)

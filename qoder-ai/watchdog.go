@@ -1,13 +1,12 @@
 // watchdog.go runs the periodic account watchdog — every interval (default
-// 10 minutes) it refreshes the credits snapshot for every qoder-ai account
-// and fires the scheduled active ping through the same throttled refresh runner.
+// 10 minutes) it refreshes the credits snapshot for every qoder-ai account.
 //
-// 保号 (preserve) 池已于本次同步移除：低积分不再把账号摘出路由，异常
-// 账号统一由「测试」标签（test_failed）承载。本循环因此只剩「刷新积分 + 定时活跃测试」两
-// 项职责，不再翻转任何账号状态。
+// 保号 (preserve) 池已于同步中移除：低积分不再把账号摘出路由。自动定时探活
+// 亦已于 2026-10-12 移除（上游对同账号突发调用限流），本循环因此只剩「刷新积分」
+// 一项职责，不再翻转任何账号状态、也不再发起任何推理请求。
 //
 // 驱动源保留：loadCountersFromDisk、purgeLegacyAnomalyFlags 与 flushCounters
-// 依然按 watchdog cadence（默认 10m）执行，保证计数落盘与 anomaly 清扫不失效。
+// 依然按 watchdog cadence（默认 10m）执行，保证计数落盘与遗留标签清扫不失效。
 package main
 
 import (
@@ -76,14 +75,12 @@ func waitHostReadyForWatchdog(maxWait time.Duration, ready func() bool) bool {
 }
 
 // runWatchdogTick walks every qoder-ai auth and hands the whole fleet to the
-// throttled concurrent refresh runner. Rebuilds the 「测试」label mirror from
-// disk on the same cadence.
+// throttled concurrent refresh runner.
 func runWatchdogTick() {
 	files, err := hostAuthList()
 	if err != nil {
 		return
 	}
-	refreshTestFailedSetFromDisk()
 	targets := make([]refreshTarget, 0, len(files))
 	for _, f := range files {
 		targets = append(targets, refreshTarget{AuthIndex: f.AuthIndex, AuthID: f.ID})

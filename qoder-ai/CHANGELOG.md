@@ -1,5 +1,18 @@
 # Qoder AI Plugin Changelog
 
+## 0.1.10
+
+### Fix - 移除自动定时探活、下线 test_failed 机制、签到时间收敛为 10:00/22:00
+
+- 变更要点:
+  1. 根因：上游对同账号突发调用限流，在 HTTP 200 下返回业务码 `110: Billing daily count exceeded`。自动探活每轮 5 模型轮测 + 每账号 10 分钟节流，一天产生上千次真实推理调用，稳定触发该限流并消耗真实推理的账号配额（实测健康账号连发 20 次均成功，密集轮测则触发 110，属突发限流而非日配额耗尽）。
+  2. 移除自动定时探活全链路：删除 `doActivePing`（多模型轮测）、`triggerActivePing`、30 分钟节流状态、`refresh_runner` 触发点与 watchdog 探活语义。**保留面板「测试」按钮的手动单次调用**（用户主动点击才发 1 次请求）。
+  3. 完整下线 `test_failed` 机制：打标/清标逻辑唯一宿主在自动探活内，探活移除后该标签将永久无法清除、导致存量账号被永久排除出调度。故一并删除机制本体（`test_failed_tag.go`）、三处调度排除判据（`scheduler.go` / `active_auth.go` / `failover_retry.go`）、面板字段与「测试」筛选标签，并在启动时剥离存量标签（`stripAnomalyKey` 扩展）。
+  4. 签到时间由每 4 小时（`[0,4,8,12,16,20]`）收敛为每天 **10:00 / 22:00** 两次；新增 `shouldRunCheckinNow` 门控——共享定时器会被 keepalive 时刻唤醒，不门控会让签到在那些时刻重复触发。
+  5. 面板文案同步：`09:00/21:00` → `10:00/22:00`，`schedule` 字段同步为 `["10:00","22:00"]`。
+- 涉及文件：`active_ping.go`、`refresh_runner.go`、`watchdog.go`、`anomaly_purge.go`、`scheduler.go`、`active_auth.go`、`failover_retry.go`、`panel.go`、`panel.html`、`credits_handler.go`、`usage_config.go`、`checkin.go`、`active_ping_test.go`、`routing_exclusion_test.go`、`checkin_schedule_test.go`（新增）；删除 `test_failed_tag.go`、`test_failed_tag_test.go`。
+- 门禁：`cgo-shim-build.py qoder-ai` build/vet/test 全绿；`checkin_schedule_test.go` 经哨兵变异（`checkinHours` 回退 6 槽）后 4 用例精确 FAIL，证明真实进编译；6-review `STYLE: PASS`；`POLLUTION: PASS`。
+
 ## 0.1.9
 
 ### Fix - 识别上游 HTTP 200 排队帧，消除大上下文请求 60 秒挂死

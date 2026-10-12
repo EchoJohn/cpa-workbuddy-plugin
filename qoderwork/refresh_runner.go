@@ -25,7 +25,6 @@
 package main
 
 import (
-	"log"
 	"errors"
 	"strings"
 	"sync"
@@ -303,8 +302,6 @@ func doFetchOne(authIndex, authID string) error {
 			return errors.New(e)
 		}
 	}
-	if pingErr := triggerActivePing(authIndex, authID, sa); pingErr != nil {
-		log.Printf("[qoderwork] active ping account %s warning: %v", authID, pingErr)
-	}
+	// Qoder 存在每日请求次数限制，后台刷新严禁自动触发探活推理，避免无意义消耗用户配额。
 	return nil
 }

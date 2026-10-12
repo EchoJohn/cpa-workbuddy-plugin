@@ -70,7 +70,7 @@ button.sec{background:var(--btn-sec);color:var(--fg)}button.sec:hover{background
 .uid{color:var(--mut);font-size:11px;font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:12px}
 .badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:99px;background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border)}
 .badge.exhausted{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
-.badge.test-failed{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border);font-style:italic}
+.badge.exhausted{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border)}
 .badge.stat{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border);font-weight:500}
 .badge.cooling{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
 .badge.pro{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
@@ -209,7 +209,7 @@ button.danger:hover{background:var(--err);color:#fff}
 <body>
 <div class="wrap">
   <h1>Qoder AI 账号面板</h1>
-  <div class="sub">积分余额 · CN 每日签到（09:00/21:00）· 耗尽自动关</div>
+  <div class="sub">积分余额 · CN 每日签到（10:00/22:00）· 耗尽自动关</div>
   <div id="authBox" class="card" style="display:none;margin-bottom:16px">
     <div style="margin-bottom:8px;color:var(--mut)">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
     <div style="display:flex;gap:8px">
@@ -224,7 +224,7 @@ button.danger:hover{background:var(--err);color:#fff}
     <input id="searchInput" class="search" type="search" placeholder="搜索昵称 / UID" oninput="onSearchChange(this.value)" autocomplete="off">
     <button class="sec sort-btn" id="sortBtn" onclick="toggleSort(this)" title="按可用积分切换升序/降序">积分 ↕</button>
 
-    <label class="toggle" title="仅 CN 账号 09:00 / 21:00"><input type="checkbox" id="autoToggle" onchange="toggleAuto(this.checked)"> 自动签到(CN)</label>
+    <label class="toggle" title="仅 CN 账号 10:00 / 22:00"><input type="checkbox" id="autoToggle" onchange="toggleAuto(this.checked)"> 自动签到(CN)</label>
     <span class="toggle" id="svtime"></span>
   </div>
   <div class="filter-bar" id="filterBar">
@@ -233,7 +233,6 @@ button.danger:hover{background:var(--err);color:#fff}
     <button type="button" class="ftag" data-region="cn" onclick="filterRegion('cn',this)">CN <span class="cnt" id="cntCn">0</span></button>
     
     <button type="button" class="ftag" data-region="exhausted" onclick="filterRegion('exhausted',this)">耗尽 <span class="cnt" id="cntExhausted">0</span></button>
-    <button type="button" class="ftag" data-region="test" onclick="filterRegion('test',this)" title="定时活跃测试失败且仍有积分的账号；建议人工复核后清理">测试 <span class="cnt" id="cntTest">0</span></button>
   </div>
   <div class="summary card" id="summaryBox" style="display:none"></div>
   <div id="grid" class="grid"><div class="loading">加载中…</div></div>
@@ -453,10 +452,10 @@ function card(a){
     ? `<button class="done" disabled="disabled">使用中</button>`
     : (disabled?``:`<button class="sec" data-action="select" data-auth-index="${esc(a.auth_index)}">选用</button>`);
   const refreshBtn=`<button class="sec" data-action="refresh" data-auth-index="${esc(a.auth_index)}" title="刷新积分">刷新</button>`;
-  const badges=(selected?`<span class="badge" style="background:var(--acc-ring);color:var(--acc);border-color:var(--acc)">使用中</span>`:"")+(disabled?`<span class="badge disabled">已禁用</span>`:"")+(a.test_failed?`<span class="badge test-failed" title="定时活跃测试失败且仍有积分；建议人工复核后清理">测试</span>`:"")+(exhausted?`<span class="badge exhausted">耗尽</span>`:"")+regionBadge+`<span class="badge ${esc(plan)}">${esc(a.plan||"-")}</span>`;
+  const badges=(selected?`<span class="badge" style="background:var(--acc-ring);color:var(--acc);border-color:var(--acc)">使用中</span>`:"")+(disabled?`<span class="badge disabled">已禁用</span>`:"")+(exhausted?`<span class="badge exhausted">耗尽</span>`:"")+regionBadge+`<span class="badge ${esc(plan)}">${esc(a.plan||"-")}</span>`;
   const display=(a.nickname||a.label||a.name||"").replace(/^qoderai-?/i,"");
   const nick=display||("u"+(a.uid||"").slice(-8));
-  return `<div class="card${selected?" selected":""}" data-region="${region}" data-auth="${esc(a.auth_index)}" data-test="${a.test_failed?"1":"0"}" data-refresh-state="${a._refreshState||""}" data-nickname="${esc(display)}" data-uid="${esc(a.uid||"")}" data-name="${esc(a.name||"")}">
+  return `<div class="card${selected?" selected":""}" data-region="${region}" data-auth="${esc(a.auth_index)}" data-refresh-state="${a._refreshState||""}" data-nickname="${esc(display)}" data-uid="${esc(a.uid||"")}" data-name="${esc(a.name||"")}">
   <h2>${esc(nick)} <span style="display:flex;gap:6px;align-items:center">${badges}<button type="button" class="card-del" data-action="delete" data-auth-index="${esc(a.auth_index)}" title="删除账号（需二次确认）" aria-label="删除账号">×</button></span></h2>
   <div class="uid">${esc(a.uid||"")} · ${esc(a.name||"")}</div>
   ${refreshStateHTML(a)}
@@ -535,9 +534,8 @@ function filterRegion(region, btn){
     const r=c.dataset.region||"cn";
     let show=true;
     if(currentFilter==="all") show=true;
-    else if(currentFilter==="available") show=!(c.dataset.disabled==="1"||c.dataset.test==="1"||c.querySelector(".badge.exhausted")!=null);
+    else if(currentFilter==="available") show=!(c.dataset.disabled==="1"||c.querySelector(".badge.exhausted")!=null);
     else if(currentFilter==="exhausted") show=c.querySelector(".badge.exhausted")!=null;
-    else if(currentFilter==="test") show=c.dataset.test==="1";
     else show=r===currentFilter;
     if(show&&currentSearch){
       const hay=((c.dataset.nickname||"")+" "+(c.dataset.name||"")+" "+(c.dataset.uid||"")).toLowerCase();
@@ -548,42 +546,36 @@ function filterRegion(region, btn){
   renderSummary(lastAccounts);
 }
 function updateFilterCounts(accounts){
-  let cn=0, ex=0, prs=0, avail=0;
+  let cn=0, ex=0, avail=0;
   (accounts||[]).forEach(a=>{
     cn++;
     if(a.exhausted||(a.credits&&a.credits.total_remain===0&&(a.credits.total_used>0||(a.credits.packages&&a.credits.packages.length)))) ex++;
-    if(a.test_failed) prs++;
     const c=creditOf(a);
     const isExhausted=!!a.exhausted||(c.known&&c.remain===0&&(c.used>0||c.size>0));
-    if(!(a.disabled||a.test_failed||isExhausted)) avail++;
+    if(!(a.disabled||isExhausted)) avail++;
   });
   const elAll=document.getElementById("cntAll");
   const elCn=document.getElementById("cntCn");
   const elEx=document.getElementById("cntExhausted");
-  const elPrs=document.getElementById("cntTest");
   const elAvail=document.getElementById("cntAvailable");
   if(elAll) elAll.textContent=String((accounts||[]).length);
   if(elCn) elCn.textContent=String(cn);
   if(elEx) elEx.textContent=String(ex);
-  if(elPrs) elPrs.textContent=String(prs);
   if(elAvail) elAvail.textContent=String(avail);
 }
 function accountsForFilter(accounts){
   const list=accounts||[];
   if(currentFilter==="all") return list;
   if(currentFilter==="available"){
-    // 可用 = 不属于保号池 / 已禁用 / 已耗尽（同步自 workbuddy 0.14.4）
+    // 可用 = 不属于已禁用 / 已耗尽（同步自 workbuddy 0.14.4）
     return list.filter(a=>{
       const c=creditOf(a);
       const isExhausted=!!a.exhausted||(c.known&&c.remain===0&&(c.used>0||c.size>0));
-      return !(a.disabled||a.test_failed||isExhausted);
+      return !(a.disabled||isExhausted);
     });
   }
   if(currentFilter==="exhausted"){
     return list.filter(a=>a.exhausted||(a.credits&&a.credits.total_remain===0&&(a.credits.total_used>0||(a.credits.packages&&a.credits.packages.length))));
-  }
-  if(currentFilter==="test"){
-    return list.filter(a=>!!a.test_failed);
   }
   return list.filter(a=>(a.region||"cn")===currentFilter);
 }
@@ -660,19 +652,18 @@ function renderSummary(accounts){
   // 5 卡片口径：剩余(可用) / 剩余(不可用) / 已用(消耗) / 额度池 / 消耗占比
   // 「剩余(可用)/已用/额度池/占比」按可用账号统计；「剩余(不可用)」独立统计不可用账号。
   // 不可用 = 保号池 / 已禁用 / 已耗尽（同步自 workbuddy 0.14.4）
-  let remainAvail=0, remainUnavail=0, used=0, size=0, knownN=0, disabledN=0, exhaustedN=0, preserveN=0, unavailN=0;
+  let remainAvail=0, remainUnavail=0, used=0, size=0, knownN=0, disabledN=0, exhaustedN=0, unavailN=0;
   let cnRemain=0, cnUsed=0;
   scoped.forEach(a=>{
     const c=creditOf(a);
     const isExhausted=!!a.exhausted||(c.known&&c.remain===0&&(c.used>0||c.size>0));
-    const isUnavailable=!!a.disabled||!!a.test_failed||isExhausted;
+    const isUnavailable=!!a.disabled||isExhausted;
     if(c.known){
       if(isUnavailable){ remainUnavail+=c.remain; unavailN++; }
       else { remainAvail+=c.remain; used+=c.used; size+=c.size; knownN++; }
     }
     if(a.disabled) disabledN++;
     if(isExhausted) exhaustedN++;
-    if(a.test_failed) preserveN++;
   });
   let allRemain=0, allUsed=0, allSize=0;
   all.forEach(a=>{
@@ -685,13 +676,13 @@ function renderSummary(accounts){
   const pct=total>0?Math.round(used/total*100):0;
   let barColor="var(--ok)"; if(pct>60)barColor="var(--warn)"; if(pct>85)barColor="var(--err)";
   // 标题文案：「可用」过滤时直接用"可用账号"；其他用通用「全部账号」
-  const scopeLabel=currentFilter==="all"?"全部账号":(currentFilter==="available"?"可用账号":(currentFilter==="cn"?"CN 账号":(currentFilter==="exhausted"?"耗尽账号":(currentFilter==="test"?"测试账号":"全部账号"))));
+  const scopeLabel=currentFilter==="all"?"全部账号":(currentFilter==="available"?"可用账号":(currentFilter==="cn"?"CN 账号":(currentFilter==="exhausted"?"耗尽账号":"全部账号")));
   const allTotal=allSize>0?allSize:(allRemain+allUsed);
   box.style.display="block";
   box.innerHTML=`
     <div class="summary-hd">
       <div class="summary-title">用量汇总 · ${esc(scopeLabel)}</div>
-      <div class="summary-meta">${scoped.length} 个账号 · 可用 ${knownN} · 不可用 ${unavailN} · 禁用 ${disabledN} · 耗尽 ${exhaustedN} · 测试 ${preserveN}</div>
+      <div class="summary-meta">${scoped.length} 个账号 · 可用 ${knownN} · 不可用 ${unavailN} · 禁用 ${disabledN} · 耗尽 ${exhaustedN}</div>
     </div>
     <div class="summary-grid">
       <div class="summary-item"><div class="k">剩余(可用)</div><div class="v ok">${remainAvail}</div></div>
