@@ -1,5 +1,14 @@
 # TraeWork Plugin Changelog
 
+## 0.2.9
+
+### Feat - 引入官方规格矩阵自适应 max_tokens 计算
+
+- 变更要点:
+  1. 引入 `model_specs.go`：维护 Trae 官方及主流推理模型规格矩阵（`qwen3.8-max`, `deepseek-reasoner` 等）。
+  2. 动态自适应补齐与放宽：流式路径下客户端未传 `max_tokens` 时，优先使用官方规格上限（如 `qwen3.8-max` 20000），推理模型且客户端传 <= 8192 时放宽至 ReasoningMax，超限截断，替代旧有的单一 20000 硬编码。
+  3. 模型动态发现同步：`fetchTraeModels()` 将每个模型的 `MaxCompletionTokens` 从官方规格矩阵中动态填充，废除盲给默认值。
+  4. 门禁验证：`cgo-shim-build.py traework` 编译与单测全绿。
 
 ## 0.2.8
 

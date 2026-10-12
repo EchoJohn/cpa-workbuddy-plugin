@@ -134,10 +134,20 @@ func buildTraePayload(messages []map[string]any, model string, stream bool, maxT
 	if toolChoice != "" {
 		payload["tool_choice"] = toolChoice
 	}
-	// 流式路径缺省 max_tokens：客户端不传时上游 Trae 会给极小上限，导致
-	// solo 长任务刚开口就 done；补默认值仅作用于流式，非流式保持原样。
-	if stream && maxTokens <= 0 {
-		maxTokens = streamDefaultMaxTokens
+	// 流式路径自适应 max_tokens：按模型官方规格自适应放宽/截断
+	if stream {
+		mLower := strings.ToLower(configName)
+		isReasoning := strings.Contains(mLower, "reasoner") || strings.Contains(mLower, "thinking")
+		if maxTokens <= 0 {
+			spec := resolveOfficialModelSpec(configName)
+			if spec.MaxOutputTokens > 0 {
+				maxTokens = int(spec.MaxOutputTokens)
+			} else {
+				maxTokens = streamDefaultMaxTokens
+			}
+		} else if maxTokens <= 8192 && isReasoning {
+			maxTokens = int(computeAdaptiveMaxTokens(configName, int64(maxTokens), true))
+		}
 	}
 	if maxTokens > 0 {
 		payload["max_tokens"] = maxTokens

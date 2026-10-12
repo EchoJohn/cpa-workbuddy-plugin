@@ -2,13 +2,14 @@
 
 ## 0.15.6
 
-### Feat & Fix - 设立安全缓冲额度红线 (minRoutableCredits=20)、健康平摊轮询与换号过滤
+### Feat & Fix - 设立安全缓冲额度红线 (minRoutableCredits=20)、健康平摊轮询与官方规格自适应 max_tokens
 
 - 变更要点:
   1. 设立安全缓冲额度红线 (`min_routable_credits`，默认 20，可配置)：剩余额度 `< 20` 的账号视为低额保护态，不再分配新推理流量，防止推理中途因额度耗尽断开。
   2. 调度策略逆转：废除残血优先（Low-Credit-First）升序排序，在 `scheduler.pick` 初筛中硬排除低额与耗尽账号，存活健康候选按充裕优先并结合平摊轮询（Round-Robin）均衡负载。
   3. 请求内换号链过滤：`pickNextAuth` 跳过 `remain < min_routable_credits` 账号；`hardCreditMarkers` 补齐 `exceeded the quota` 与 `14018` 触发换号重试。
-  4. 面板状态与视觉对齐：新增 `low_credits` 字段与「低额保护」黄色徽标展示，与调度口径完全一致。
+  4. 按模型官方规格自适应计算 `max_tokens`：引入 `model_specs.go` 维护各大主流模型官方规格矩阵，未传时补齐官方最大值，推理模型且客户端传 <= 8192 时自适应放宽至官方 ReasoningMax（如 DeepSeek 64k / GLM 128k / Claude 64k），超出官方上限安全 clamp，避免思维链思考耗尽 token 截断。
+  5. 面板状态与视觉对齐：新增 `low_credits` 字段与「低额保护」黄色徽标展示，与调度口径完全一致。
 
 ## 0.15.5
 

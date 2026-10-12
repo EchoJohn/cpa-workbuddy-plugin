@@ -1,5 +1,15 @@
 # QoderWork Plugin Changelog
 
+## 0.9.32
+
+### Feat - 引入官方规格矩阵自适应 max_tokens 计算
+
+- 变更要点:
+  1. 引入 `model_specs.go`：维护 Qoder/阿里官方及主流推理模型规格矩阵（`qfmodel`, `qmodel_38max`, `gmodel`, `dmodel`, `deepseek-v4.1-flash` 等）。
+  2. 请求体动态注入自适应 `parameters.max_tokens`：客户端未指定时自动补齐官方标准上限；推理模型且客户端指定 <= 8192 时放宽至 ReasoningMax，超限截断，根治推理模型 token 耗尽问题。
+  3. 模型目录同步：`wbModels()` 输出真实 `MaxCompletionTokens` 规格，废除全量硬编码 8192。
+  4. 门禁验证：`cgo-shim-build.py qoderwork` 编译与测试全绿。
+
 ## 0.9.31
 
 ### Fix - 移除自动定时探活、下线 test_failed 机制、签到时间收敛为 10:00/22:00

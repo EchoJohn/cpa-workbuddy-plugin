@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.17] - 2026-10-13
+
+### Feat
+- **引入官方规格矩阵自适应 max_tokens 计算**：
+  - 新增 `model_specs.go`：维护智谱 GLM 家族（`glm-5.3`, `glm-5.3-flash`, `glm-4-plus` 等）官方规格矩阵；
+  - 请求执行体原地优化：在 `mutateModel` 中接入 `relaxMaxTokensInPlace`，客户端未传时补齐官方最大值，推理模型在客户端指定 <= 8192 时放宽至 ReasoningMax（如 GLM-5.3 为 128000），避免长推理思考被短 token 截断；
+  - 模型静态目录（`allConfiguredModels`）动态注入 `resolveOfficialModelSpec` 规格，废除旧有静态写死限制；
+  - 补充自适应计算与 payload 变异单元测试。
+
 ## [0.1.16] - 2026-10-13
 
 ### Fixed

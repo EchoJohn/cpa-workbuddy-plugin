@@ -308,6 +308,7 @@ func mutateModel(raw []byte, model string) []byte {
 	if model != "" {
 		body["model"] = model
 	}
+	relaxMaxTokensInPlace(body)
 	out, err := json.Marshal(body)
 	if err != nil {
 		return append([]byte(nil), raw...)

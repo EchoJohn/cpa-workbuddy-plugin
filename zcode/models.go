@@ -194,6 +194,18 @@ func allConfiguredModels() []pluginapi.ModelInfo {
 
 	var result []pluginapi.ModelInfo
 	for id := range modelsSet {
+		spec := resolveOfficialModelSpec(id)
+		ctxLen := spec.ContextWindow
+		if ctxLen <= 0 {
+			ctxLen = 200000
+		}
+		maxTokens := spec.MaxOutputTokens
+		if spec.ReasoningMax > maxTokens {
+			maxTokens = spec.ReasoningMax
+		}
+		if maxTokens <= 0 {
+			maxTokens = 128000
+		}
 		result = append(result, pluginapi.ModelInfo{
 			ID:                         id,
 			Object:                     "model",
@@ -201,8 +213,8 @@ func allConfiguredModels() []pluginapi.ModelInfo {
 			DisplayName:                id,
 			Name:                       mappedModel(id, cfg),
 			SupportedGenerationMethods: []string{"chat"},
-			ContextLength:              200000,
-			MaxCompletionTokens:        128000,
+			ContextLength:              ctxLen,
+			MaxCompletionTokens:        maxTokens,
 			UserDefined:                true,
 		})
 	}

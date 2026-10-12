@@ -125,9 +125,11 @@ func decodeOpenAIContent(raw json.RawMessage) (string, error) {
 
 // openAIRequest is the CPA-facing chat completion request.
 type openAIRequest struct {
-	Model    string          `json:"model"`
-	Messages []openAIMessage `json:"messages"`
-	Stream   bool            `json:"stream"`
+	Model           string          `json:"model"`
+	Messages        []openAIMessage `json:"messages"`
+	Stream          bool            `json:"stream"`
+	MaxTokens       int64           `json:"max_tokens"`
+	ReasoningEffort string          `json:"reasoning_effort"`
 }
 
 // extractLatestUserPrompt returns the content of the last user message,
@@ -171,6 +173,17 @@ func buildQoderBody(req *openAIRequest, modelKey, userType string) ([]byte, erro
 	// model_config
 	if mc, ok := base["model_config"].(map[string]any); ok {
 		mc["key"] = modelKey
+	}
+
+	// parameters: 按模型官方规格自适应计算放宽 max_tokens，避免长思维链被截断
+	if params, ok := base["parameters"].(map[string]any); ok {
+		mLower := strings.ToLower(modelKey)
+		isReasoning := strings.Contains(mLower, "reasoner") || strings.Contains(mLower, "thinking") || (req != nil && req.ReasoningEffort != "" && req.ReasoningEffort != "none")
+		val := int64(0)
+		if req != nil && req.MaxTokens > 0 {
+			val = int64(req.MaxTokens)
+		}
+		params["max_tokens"] = computeAdaptiveMaxTokens(modelKey, val, isReasoning)
 	}
 
 	// chat_context.text.text + chat_context.extra.originalContent.text
