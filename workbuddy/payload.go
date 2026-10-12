@@ -45,6 +45,9 @@ func prepareUpstreamBody(payload, original []byte, sa *storedAuth, upstreamModel
 	// 5. rewriteModel: swap client model name to upstream model id.
 	rewriteModelInPlace(obj, upstreamModel)
 
+	// 6. relaxMaxTokens: 放宽 max_tokens 至 128,000，防止长思考链被客户端保守上限截断。
+	relaxMaxTokensInPlace(obj)
+
 	out, err := json.Marshal(obj)
 	if err != nil {
 		return src
@@ -474,6 +477,27 @@ func isEmptyValue(v any) bool {
 			if !isEmptyValue(val) {
 				return false
 			}
+		}
+		return true
+	}
+	return false
+}
+
+const defaultRelaxedMaxTokens int64 = 128000
+
+// relaxMaxTokensInPlace 放宽发往上游的 max_tokens 输出上限。
+// 当客户端未传入、或传入上限小于 128,000（如 Qoder 客户端写死的 8192）时，
+// 统一放宽至 128,000，保证思考模型在深度推理时不因提前触顶而被上游截断（finish_reason=length）；
+// 若客户端显式请求了大于 128,000 的数值，则原样保留。
+// [参数] obj：反序列化后的请求对象 map
+// [返回] 是否对 obj 产生了修改
+// 最近修改时间 2026-10-13 01:25:00（放宽输出 token 上限至 128k 解决思考链吃满配额缺陷）
+func relaxMaxTokensInPlace(obj map[string]any) bool {
+	val := jsonI64(obj, "max_tokens", "max_completion_tokens")
+	if val < defaultRelaxedMaxTokens {
+		obj["max_tokens"] = defaultRelaxedMaxTokens
+		if _, hasMCT := obj["max_completion_tokens"]; hasMCT {
+			delete(obj, "max_completion_tokens")
 		}
 		return true
 	}

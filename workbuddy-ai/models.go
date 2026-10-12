@@ -201,7 +201,11 @@ func (m upstreamModelEntry) contextLength() int64 {
 }
 
 func (m upstreamModelEntry) maxOutputTokens() int64 {
-	return firstPositive(m.MaxOutputTokens, m.MaxCompletionToken, m.MaxTokens, m.MaxOutputTokensSnake, m.MaxTokensSnake)
+	val := firstPositive(m.MaxOutputTokens, m.MaxCompletionToken, m.MaxTokens, m.MaxOutputTokensSnake, m.MaxTokensSnake)
+	if val < defaultRelaxedMaxTokens {
+		return defaultRelaxedMaxTokens
+	}
+	return val
 }
 
 func parseModelsAPIResponse(body []byte) ([]pluginapi.ModelInfo, error) {

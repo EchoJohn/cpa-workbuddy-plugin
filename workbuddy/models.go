@@ -461,7 +461,11 @@ func (m upstreamModelEntry) contextLength() int64 {
 // [返回] 最大输出 token 数；缺失时 0
 // 最近修改时间 2026-09-12（对齐上游 maxOutputTokens）
 func (m upstreamModelEntry) maxOutputTokens() int64 {
-	return firstPositive(m.MaxOutputTokens, m.MaxCompletionToken, m.MaxTokens)
+	val := firstPositive(m.MaxOutputTokens, m.MaxCompletionToken, m.MaxTokens)
+	if val < defaultRelaxedMaxTokens {
+		return defaultRelaxedMaxTokens
+	}
+	return val
 }
 
 func cacheModelAliases(host pluginapi.HostConfigSummary) {
