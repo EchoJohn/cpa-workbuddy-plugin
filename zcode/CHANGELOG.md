@@ -7,6 +7,7 @@
   根因是请求头 `X-ZCode-App-Version` 取了具体版本号（`3.14.4`）。线上实测（`zcode.z.ai/api/v1/zcode-plan/anthropic/v1/messages`，同一账号 JWT、同一 IP 交错复测 8 次）确认：该头取具体版本号（`3.14.4` / `3.15.1` / `3.13.0` …）一律被上游 WAF 拦为 `405 + code 3012`；取非版本号字面量（`unknown` / `cli` / `electron`）稳定放行 `200`。
   桌面端 `buildZCodeSourceHeadersFromContext` 亦以 `??"unknown"` 兜底，说明 `unknown` 才是上游认可的合法取值。修复后 `AppVersion` 默认改为 `unknown`，模型调用、模型发现、探活一并生效。
 - 新增回归守卫测试 `TestFingerprint_AppVersionMustNotBeConcreteRelease`，锁定 `X-ZCode-App-Version` 不得回退为语义化版本号（临时改回 `3.14.4` 会立即 FAIL 并提示 3012 风控）。
+- **补齐宿主 `oauth-excluded-models` 过滤**（`filterExcludedModels`）：宿主只在 `model.for_auth` 的按账号路径替插件过滤，`model.static` 返回的列表会被原样登记进全局模型目录并参与路由选模，因此插件必须在出口自行过滤——此前 zcode 是 5 个 OAuth 插件里唯一缺口。现于 `MethodModelStatic` 与 `MethodModelForAuth` 两个活出口应用（`MethodModelRegister` 为死代码：宿主仅在声明 `model_registrar` 能力时才调用它，故不改）。未配置排除项时原样返回入参，零行为变化。新增 4 项用例覆盖命中/缺省/键大小写漂移/入参不被就地压缩。
 
 ## [0.1.10] - 2026-10-12
 
