@@ -71,7 +71,7 @@ const (
 
 var (
 	// version 当前插件版本号。
-	version      = "0.1.13"
+	version      = "0.1.14"
 	hostAPI      *C.cliproxy_host_api
 	hostAPIMu    sync.RWMutex
 	activeConfig atomic.Value
@@ -232,6 +232,7 @@ type registrationCapability struct {
 	ExecutorOutputFormats []string                     `json:"executor_output_formats,omitempty"`
 	Scheduler             bool                         `json:"scheduler"`
 	ManagementAPI         bool                         `json:"management_api"`
+	UsagePlugin           bool                         `json:"usage_plugin"`
 }
 
 func zcodeRegistration() registration {
@@ -252,17 +253,20 @@ func zcodeRegistration() registration {
 				{Name: "model_cache_seconds", Type: pluginapi.ConfigFieldTypeInteger, Description: "Model cache TTL in seconds."},
 				{Name: "timeout_seconds", Type: pluginapi.ConfigFieldTypeInteger, Description: "Request timeout in seconds."},
 				{Name: "mimic", Type: pluginapi.ConfigFieldTypeObject, Description: "ZCode client fingerprint settings."},
+				{Name: "usage_feed_enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "将每次请求的 token 用量追加写入共享 NDJSON 数据流，供 token-usage-tracker 插件消费（默认开启）。"},
+				{Name: "usage_feed_path", Type: pluginapi.ConfigFieldTypeString, Description: "可选：共享用量数据流路径（默认 <CLIProxyAPI 根目录>/data/token-usage-feed.ndjson）。"},
 			},
 		},
 		Capabilities: registrationCapability{
 			ModelProvider:         true,
 			AuthProvider:          true, // 开启 AuthProvider：支持在 CPA 管理后台「OAuth 登录」中发起 ZCode 桥接授权绑定
 			Executor:              true,
-			ExecutorModelScope:    pluginapi.ExecutorModelScopeStatic,
+			ExecutorModelScope:    pluginapi.ExecutorModelScopeOAuth,
 			ExecutorInputFormats:  []string{"anthropic"},
 			ExecutorOutputFormats: []string{"anthropic"},
 			Scheduler:             true,
 			ManagementAPI:         true,
+			UsagePlugin:           true,
 		},
 	}
 }
@@ -284,6 +288,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodModelStatic:
 		var req pluginapi.StaticModelRequest
 		_ = json.Unmarshal(request, &req)
+		cacheModelAliases(req.Host)
 		return okEnvelope(pluginapi.ModelResponse{
 			Provider: providerName,
 			Models:   filterExcludedModels(allConfiguredModels(), req.Host),
@@ -292,6 +297,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodModelForAuth:
 		var req pluginapi.AuthModelRequest
 		_ = json.Unmarshal(request, &req)
+		cacheModelAliases(req.Host)
 		models := authModelsForIndex(req.AuthID)
 		var modelInfos []pluginapi.ModelInfo
 		for _, m := range models {
@@ -345,6 +351,9 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodSchedulerPick:
 		return handleSchedulerPick(request)
 
+	case pluginabi.MethodUsageHandle:
+		return okEnvelope(map[string]any{"forwarded": false})
+
 	default:
 		return errorEnvelope("unknown_method", "unknown method: "+method), nil
 	}
@@ -390,6 +399,7 @@ func configurePlugin(raw []byte) error {
 		}
 	}
 	activeConfig.Store(cfg)
+	configureUsageFeed(req.ConfigYAML)
 	return nil
 }
 

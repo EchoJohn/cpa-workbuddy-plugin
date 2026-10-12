@@ -56,7 +56,7 @@ func pumpUpstreamStream(
 	cancel context.CancelFunc,
 	streamID string,
 	resp *http.Response,
-	authID, model, upstreamModel string,
+	authID, accountLabel, model, upstreamModel string,
 	startTime time.Time,
 ) {
 	defer func() {
@@ -67,7 +67,9 @@ func pumpUpstreamStream(
 		streamClose(streamID)
 	}()
 
-	var inTokens, outTokens int64
+	var inTokens, outTokens, cacheReadTokens, cacheCreationTokens int64
+	var ttftNS uint64
+	firstByteSeen := false
 	reader := bufio.NewReader(resp.Body)
 
 	for {
@@ -79,16 +81,29 @@ func pumpUpstreamStream(
 
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
+			if !firstByteSeen {
+				firstByteSeen = true
+				if d := time.Since(startTime); d > 0 {
+					ttftNS = uint64(d.Nanoseconds())
+				}
+			}
+
 			lineStr := strings.TrimSpace(string(line))
 			if strings.HasPrefix(lineStr, "data:") {
 				dataPayload := strings.TrimSpace(strings.TrimPrefix(lineStr, "data:"))
 				if dataPayload != "" && dataPayload != "[DONE]" {
-					// 提取 token 用量
+					// 提取 token 用量（Anthropic 协议）
 					if it := gjson.Get(dataPayload, "message.usage.input_tokens").Int(); it > 0 {
 						inTokens = it
 					}
 					if ot := gjson.Get(dataPayload, "usage.output_tokens").Int(); ot > 0 {
 						outTokens = ot
+					}
+					if crit := gjson.Get(dataPayload, "message.usage.cache_read_input_tokens").Int(); crit > 0 {
+						cacheReadTokens = crit
+					}
+					if ccit := gjson.Get(dataPayload, "message.usage.cache_creation_input_tokens").Int(); ccit > 0 {
+						cacheCreationTokens = ccit
 					}
 				}
 			}
@@ -100,10 +115,17 @@ func pumpUpstreamStream(
 		}
 
 		if err != nil {
+			durationMS := time.Since(startTime).Milliseconds()
+			detail := usageTokensDetail{
+				InputTokens:         inTokens,
+				OutputTokens:        outTokens,
+				CacheReadTokens:     cacheReadTokens,
+				CacheCreationTokens: cacheCreationTokens,
+				TotalTokens:         inTokens + outTokens,
+			}
 			if err != io.EOF {
 				streamEmitError(streamID, err.Error())
-				durationMS := time.Since(startTime).Milliseconds()
-				publishUsage(authID, model, upstreamModel, inTokens, outTokens, durationMS, resp.StatusCode, true, err.Error())
+				publishUsage(authID, accountLabel, model, upstreamModel, startTime, detail, durationMS, resp.StatusCode, true, err.Error(), ttftNS)
 				noteAccountFailure(authID, resp.StatusCode, err.Error())
 				return
 			}
@@ -112,6 +134,13 @@ func pumpUpstreamStream(
 	}
 
 	durationMS := time.Since(startTime).Milliseconds()
-	publishUsage(authID, model, upstreamModel, inTokens, outTokens, durationMS, resp.StatusCode, false, "")
+	detail := usageTokensDetail{
+		InputTokens:         inTokens,
+		OutputTokens:        outTokens,
+		CacheReadTokens:     cacheReadTokens,
+		CacheCreationTokens: cacheCreationTokens,
+		TotalTokens:         inTokens + outTokens,
+	}
+	publishUsage(authID, accountLabel, model, upstreamModel, startTime, detail, durationMS, resp.StatusCode, false, "", ttftNS)
 	resetAccountFailover(authID)
 }

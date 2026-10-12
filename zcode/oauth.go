@@ -236,6 +236,7 @@ func settleZaiPollResult(resp *zaiCLIPollResponse, label string) (*pluginapi.Aut
 	if errSave != nil {
 		return nil, fmt.Errorf("save account: %w", errSave)
 	}
+	globalQuotaRefresh.EnqueueOne(stored.AuthID)
 
 	rawStorage, _ := json.Marshal(stored)
 	authData := pluginapi.AuthData{

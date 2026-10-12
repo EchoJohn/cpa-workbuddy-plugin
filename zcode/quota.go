@@ -186,17 +186,20 @@ func quotaForAccount(sa *StoredAuth, force bool) (*zcodeQuotaSnapshot, error) {
 	}
 	key := sa.AuthID
 
-	if !force {
-		zcodeQuotaMu.RLock()
-		entry, ok := zcodeQuotaCache[key]
-		zcodeQuotaMu.RUnlock()
-		if ok && entry.quota != nil && time.Since(entry.fetchedAt) < zcodeQuotaTTL {
-			return entry.quota, nil
-		}
+	zcodeQuotaMu.RLock()
+	oldEntry, hasOld := zcodeQuotaCache[key]
+	zcodeQuotaMu.RUnlock()
+
+	if !force && hasOld && oldEntry.quota != nil && time.Since(oldEntry.fetchedAt) < zcodeQuotaTTL {
+		return oldEntry.quota, nil
 	}
 
 	snap, errFetch := fetchAccountQuota(sa)
 	if errFetch != nil {
+		// 上游瞬时拉取失败：若存在历史有效快照，优雅回退旧缓存，避免网络抖动导致额度清空
+		if hasOld && oldEntry.quota != nil {
+			return oldEntry.quota, nil
+		}
 		return nil, errFetch
 	}
 	zcodeQuotaMu.Lock()

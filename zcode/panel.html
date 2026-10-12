@@ -489,7 +489,7 @@ function sortedAccounts(accounts){
 function quotaHTML(a){
   const q=a&&a.quota;
   if(!q||!Array.isArray(q.entitlements)||!q.entitlements.length){
-    return `<div class="pb"><div class="pb-label"><span class="pb-primary"><span class="pb-segment">每日额度</span></span><span class="pb-used"><span class="spin"></span>加载中…</span></div><div class="pb-track"><div class="pb-bar" style="width:0%"></div></div></div>`;
+    return `<div class="pb"><div class="pb-label"><span class="pb-primary"><span class="pb-segment">每日额度</span></span><span class="pb-used muted">未获取 (点刷新获取)</span></div><div class="pb-track"><div class="pb-bar" style="width:0%"></div></div></div>`;
   }
   const total=Number(q.total_grant)||0;
   const segs=q.entitlements.map(e=>{
@@ -744,7 +744,7 @@ function pollRefreshStatus(){
         if(st==="done"||st==="failed"){
           if(refreshSeen[id]) return;
           refreshSeen[id]=true;
-          fetchAndPatchQuota(id, {__silent:true})
+          fetchAndPatchQuota(id, {__silent:true}, false)
             .catch(()=>{})
             .then(()=>finalizeCardState(id, st, pa.error));
         }else if(st==="running"||st==="pending"){
@@ -759,9 +759,10 @@ function pollRefreshStatus(){
   tick();
   refreshPollTimer=setInterval(tick, 2000);
 }
-// 拉取单账号额度并合并进本地态 + 局部重绘（不 toast、不 busy）。
-async function fetchAndPatchQuota(authID, opts={}){
-  const d=await api(`/credits?auth_index=${encodeURIComponent(authID)}&force=1`, opts);
+// 拉取单账号额度并合并进本地态 + 局部重绘（force=false 时优先读缓存）。
+async function fetchAndPatchQuota(authID, opts={}, force=false){
+  const forceParam=force?"&force=1":"";
+  const d=await api(`/credits?auth_index=${encodeURIComponent(authID)}${forceParam}`, opts);
   const acct=(d.accounts||[])[0]||{};
   if(d.error||acct.error) throw new Error(d.error||acct.error||"未知错误");
   const a=(lastAccounts||[]).find(x=>x.auth_id===authID);
@@ -784,7 +785,7 @@ async function refreshAll(btn){
 async function refreshQuota(authID, btn){
   busy(btn,true);
   try{
-    const acct=await fetchAndPatchQuota(authID);
+    const acct=await fetchAndPatchQuota(authID, {}, true);
     const who=acct&&acct.quota?acct.quota.plan_name:authID;
     const total=acct&&acct.quota?fmtCompact(acct.quota.total_grant):"?";
     toast("额度已刷新","ok",who+" · 合计 "+total);

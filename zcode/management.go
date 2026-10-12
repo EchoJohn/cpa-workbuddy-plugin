@@ -352,6 +352,7 @@ func handleImportAccounts(body []byte) ([]byte, error) {
 			errs = append(errs, fmt.Sprintf("failed to save %s: %v", authID, err))
 		} else {
 			imported++
+			globalQuotaRefresh.EnqueueOne(sa.AuthID)
 		}
 	}
 

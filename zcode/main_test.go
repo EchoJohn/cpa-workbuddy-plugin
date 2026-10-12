@@ -40,11 +40,17 @@ func TestMain_RegistrationAndCapabilities(t *testing.T) {
 	if reg.Metadata.Name != providerName {
 		t.Fatalf("expected name %s, got %s", providerName, reg.Metadata.Name)
 	}
-	if reg.Metadata.Version != "0.1.13" {
-		t.Fatalf("expected version 0.1.12, got %s", reg.Metadata.Version)
+	if reg.Metadata.Version != "0.1.14" {
+		t.Fatalf("expected version 0.1.14, got %s", reg.Metadata.Version)
 	}
 	if !reg.Capabilities.AuthProvider {
 		t.Fatalf("expected AuthProvider capability to be true for OAuth login")
+	}
+	if reg.Capabilities.ExecutorModelScope != pluginapi.ExecutorModelScopeOAuth {
+		t.Fatalf("expected ExecutorModelScope to be OAuth, got %+v", reg.Capabilities.ExecutorModelScope)
+	}
+	if !reg.Capabilities.UsagePlugin {
+		t.Fatalf("expected UsagePlugin capability to be true")
 	}
 	if !reg.Capabilities.ModelProvider || !reg.Capabilities.Executor || !reg.Capabilities.Scheduler || !reg.Capabilities.ManagementAPI {
 		t.Fatalf("missing required capabilities: %+v", reg.Capabilities)

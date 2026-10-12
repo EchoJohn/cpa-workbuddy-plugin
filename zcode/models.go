@@ -121,12 +121,34 @@ func fetchUpstreamModels(ctx context.Context, apiKey string) ([]string, error) {
 // authModelsForIndex 获取指定账号（或默认）的可用模型列表。
 func authModelsForIndex(authID string) []string {
 	authID = strings.TrimSpace(authID)
+	cleanID := strings.TrimSuffix(authID, ".json")
 	accounts, err := listAllAuthFiles()
 	if err == nil {
 		for _, acc := range accounts {
-			if acc.AuthID == authID || authFileNameFor(acc.APIKey) == authID+".json" {
+			if acc.AuthID == cleanID || acc.AuthID == authID || authFileNameFor(acc.APIKey) == cleanID+".json" {
 				if len(acc.Models) > 0 {
 					return acc.Models
+				}
+				// 尝试从额度快照提取模型列表（entitlements 里的 show_name）
+				if q := cachedQuota(acc.AuthID); q != nil && len(q.Entitlements) > 0 {
+					var qModels []string
+					qSeen := make(map[string]struct{})
+					for _, ent := range q.Entitlements {
+						name := strings.TrimSpace(ent.ShowName)
+						if name == "" {
+							name = strings.TrimPrefix(ent.Capability, "model:")
+						}
+						name = normalizeOfficialGLMModelID(name)
+						if name != "" {
+							if _, exists := qSeen[name]; !exists {
+								qSeen[name] = struct{}{}
+								qModels = append(qModels, name)
+							}
+						}
+					}
+					if len(qModels) > 0 {
+						return qModels
+					}
 				}
 				models, errFetch := fetchUpstreamModels(context.Background(), acc.APIKey)
 				if errFetch == nil && len(models) > 0 {
@@ -229,11 +251,144 @@ func filterExcludedModels(models []pluginapi.ModelInfo, host pluginapi.HostConfi
 	return out
 }
 
+var modelAliasCache struct {
+	sync.RWMutex
+	byAlias map[string]string
+}
+
+func cacheModelAliases(host pluginapi.HostConfigSummary) {
+	entries := host.OAuthModelAlias[providerName]
+	if len(entries) == 0 {
+		for channel, list := range host.OAuthModelAlias {
+			if strings.EqualFold(strings.TrimSpace(channel), providerName) {
+				entries = list
+				break
+			}
+		}
+	}
+	byAlias := make(map[string]string, len(entries))
+	for _, e := range entries {
+		name := strings.TrimSpace(e.Name)
+		alias := strings.TrimSpace(e.Alias)
+		if name == "" || alias == "" || strings.EqualFold(name, alias) {
+			continue
+		}
+		byAlias[strings.ToLower(alias)] = name
+	}
+	modelAliasCache.Lock()
+	modelAliasCache.byAlias = byAlias
+	modelAliasCache.Unlock()
+}
+
+// resolveUpstreamModel 将客户端请求的别名或非标准模型标识映射为上游真实模型 ID。
+// 匹配顺序：账号属性级覆盖 > 宿主全局别名表 > 官方 GLM 模型名大小写归一化。
+func resolveUpstreamModel(model string, attributes map[string]string) string {
+	m := strings.TrimSpace(model)
+	if m == "" {
+		return model
+	}
+	key := strings.ToLower(m)
+	if name, ok := parseModelAliasAttribute(attributes)[key]; ok {
+		return normalizeOfficialGLMModelID(name)
+	}
+	modelAliasCache.RLock()
+	name, ok := modelAliasCache.byAlias[key]
+	modelAliasCache.RUnlock()
+	if ok {
+		return normalizeOfficialGLMModelID(name)
+	}
+	return normalizeOfficialGLMModelID(m)
+}
+
+func parseModelAliasAttribute(attributes map[string]string) map[string]string {
+	if len(attributes) == 0 {
+		return nil
+	}
+	raw := ""
+	for _, k := range []string{"model_alias", "model-alias", "oauth-model-alias"} {
+		if v := strings.TrimSpace(attributes[k]); v != "" {
+			raw = v
+			break
+		}
+	}
+	if raw == "" {
+		return nil
+	}
+	out := make(map[string]string)
+	add := func(name, alias string) {
+		name, alias = strings.TrimSpace(name), strings.TrimSpace(alias)
+		if name != "" && alias != "" && !strings.EqualFold(name, alias) {
+			out[strings.ToLower(alias)] = name
+		}
+	}
+	if strings.HasPrefix(raw, "[") {
+		var list []struct {
+			Name  string `json:"name"`
+			Alias string `json:"alias"`
+		}
+		if json.Unmarshal([]byte(raw), &list) == nil {
+			for _, e := range list {
+				add(e.Name, e.Alias)
+			}
+			return out
+		}
+	}
+	if strings.HasPrefix(raw, "{") {
+		var m map[string]string
+		if json.Unmarshal([]byte(raw), &m) == nil {
+			for alias, name := range m {
+				add(name, alias)
+			}
+			return out
+		}
+	}
+	for _, pair := range strings.Split(raw, ",") {
+		kv := strings.SplitN(pair, "=", 2)
+		if len(kv) == 2 {
+			add(kv[1], kv[0])
+		}
+	}
+	return out
+}
+
+// normalizeOfficialGLMModelID 将模型名规范化为上游 Anthropic 兼容端点识别的权威大小写格式。
+// 对齐 ZCode 官方客户端 normalizeOfficialGlmModelId 行为：
+// 任何以 glm- 开头的模型名变体自动映射为官方标准大写，如 glm-5.3 -> GLM-5.3, glm-5.3-flash -> GLM-5.3-Flash。
+func normalizeOfficialGLMModelID(model string) string {
+	m := strings.TrimSpace(model)
+	if m == "" {
+		return m
+	}
+	canonicalMap := map[string]string{
+		"glm-5.3":       "GLM-5.3",
+		"glm-5.3-flash": "GLM-5.3-Flash",
+		"glm-5.2":       "GLM-5.2",
+		"glm-5.1":       "GLM-5.1",
+		"glm-5-turbo":   "GLM-5-Turbo",
+		"glm-4.7":       "GLM-4.7",
+		"glm-4.6":       "GLM-4.6",
+		"glm-4.5":       "GLM-4.5",
+		"glm-4.5-air":   "GLM-4.5-Air",
+		"glm-4-plus":    "GLM-4-Plus",
+		"glm-4-air":     "GLM-4-Air",
+		"glm-4-flash":   "GLM-4-Flash",
+		"glm-4v":        "GLM-4V",
+		"glm-4v-plus":   "GLM-4V-Plus",
+	}
+	if standard, ok := canonicalMap[strings.ToLower(m)]; ok {
+		return standard
+	}
+	if strings.HasPrefix(strings.ToLower(m), "glm-") {
+		return "GLM-" + m[4:]
+	}
+	return m
+}
+
 func mappedModel(model string, cfg Config) string {
 	if upstream, exists := cfg.ModelMap[model]; exists && strings.TrimSpace(upstream) != "" {
-		return strings.TrimSpace(upstream)
+		return normalizeOfficialGLMModelID(strings.TrimSpace(upstream))
 	}
-	return model
+	return resolveUpstreamModel(model, nil)
 }
 
 func keyID(apiKey string) string {

@@ -76,19 +76,29 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 
 	durationMS := time.Since(startTime).Milliseconds()
 	authID := ""
+	accountLabel := ""
 	if sa != nil {
 		authID = sa.AuthID
+		accountLabel = sa.Label
+		if accountLabel == "" {
+			accountLabel = sa.Username
+		}
 	}
 
 	if lastErr != nil {
-		publishUsage(authID, req.Model, upstreamModel, 0, 0, durationMS, finalStatusCode, true, lastErr.Error())
+		publishUsage(authID, accountLabel, req.Model, upstreamModel, startTime, usageTokensDetail{}, durationMS, finalStatusCode, true, lastErr.Error(), 0)
 		return nil, lastErr
 	}
 
 	// 提取用量
 	inTokens := gjson.GetBytes(finalRespBytes, "usage.input_tokens").Int()
 	outTokens := gjson.GetBytes(finalRespBytes, "usage.output_tokens").Int()
-	publishUsage(authID, req.Model, upstreamModel, inTokens, outTokens, durationMS, finalStatusCode, false, "")
+	detail := usageTokensDetail{
+		InputTokens:  inTokens,
+		OutputTokens: outTokens,
+		TotalTokens:  inTokens + outTokens,
+	}
+	publishUsage(authID, accountLabel, req.Model, upstreamModel, startTime, detail, durationMS, finalStatusCode, false, "", 0)
 	resetAccountFailover(authID)
 
 	return okEnvelope(pluginapi.ExecutorResponse{Payload: finalRespBytes})
@@ -108,43 +118,81 @@ func handleExecStream(raw []byte) ([]byte, error) {
 	sa := resolveTargetAuth(req.AuthID, req.StorageJSON)
 	curPayload := mutateModel(req.Payload, upstreamModel)
 
-	if sa == nil || sa.APIKey == "" {
-		streamEmitError(req.StreamID, "no available zcode account")
-		streamClose(req.StreamID)
-		return okEnvelope(streamResponse{Headers: streamHeaders()})
+	var lastStreamErr error
+	var finalResp *http.Response
+	var finalCancel context.CancelFunc
+
+	for attempt := 0; attempt < 3; attempt++ {
+		if sa == nil || sa.APIKey == "" {
+			lastStreamErr = fmt.Errorf("no available zcode account")
+			break
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		httpReq, err := prepareUpstreamRequest(ctx, curPayload, sa, cfg)
+		if err != nil {
+			cancel()
+			lastStreamErr = err
+			break
+		}
+
+		resp, err := modelHTTPClient.Do(httpReq)
+		if err != nil {
+			cancel()
+			lastStreamErr = err
+			noteAccountFailure(sa.AuthID, 0, err.Error())
+			nextSA, hasNext := pickNextAuth(sa.AuthID)
+			if !hasNext || nextSA == nil {
+				break
+			}
+			sa = nextSA
+			continue
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			_ = resp.Body.Close()
+			cancel()
+			errMsg := fmt.Sprintf("upstream status %d: %s", resp.StatusCode, string(body))
+			lastStreamErr = fmt.Errorf("%s", errMsg)
+			noteAccountFailure(sa.AuthID, resp.StatusCode, errMsg)
+
+			if shouldRotateOnUpstreamErr(resp.StatusCode, errMsg) {
+				nextSA, hasNext := pickNextAuth(sa.AuthID)
+				if hasNext && nextSA != nil {
+					sa = nextSA
+					continue
+				}
+			}
+			break
+		}
+
+		finalResp = resp
+		finalCancel = cancel
+		lastStreamErr = nil
+		break
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	httpReq, err := prepareUpstreamRequest(ctx, curPayload, sa, cfg)
-	if err != nil {
-		cancel()
-		streamEmitError(req.StreamID, err.Error())
-		streamClose(req.StreamID)
-		return okEnvelope(streamResponse{Headers: streamHeaders()})
+	durationMS := time.Since(startTime).Milliseconds()
+	authID := ""
+	accountLabel := ""
+	if sa != nil {
+		authID = sa.AuthID
+		accountLabel = sa.Label
+		if accountLabel == "" {
+			accountLabel = sa.Username
+		}
 	}
 
-	resp, err := modelHTTPClient.Do(httpReq)
-	if err != nil {
-		cancel()
-		streamEmitError(req.StreamID, err.Error())
+	if lastStreamErr != nil {
+		streamEmitError(req.StreamID, lastStreamErr.Error())
 		streamClose(req.StreamID)
-		noteAccountFailure(sa.AuthID, 0, err.Error())
-		return okEnvelope(streamResponse{Headers: streamHeaders()})
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		cancel()
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		_ = resp.Body.Close()
-		errMsg := fmt.Sprintf("upstream status %d: %s", resp.StatusCode, string(body))
-		streamEmitError(req.StreamID, errMsg)
-		streamClose(req.StreamID)
-		noteAccountFailure(sa.AuthID, resp.StatusCode, errMsg)
+		publishUsage(authID, accountLabel, req.Model, upstreamModel, startTime, usageTokensDetail{}, durationMS, 500, true, lastStreamErr.Error(), 0)
 		return okEnvelope(streamResponse{Headers: streamHeaders()})
 	}
 
 	// 异步读取并逐块推送
-	go pumpUpstreamStream(ctx, cancel, req.StreamID, resp, sa.AuthID, req.Model, upstreamModel, startTime)
+	go pumpUpstreamStream(context.Background(), finalCancel, req.StreamID, finalResp, sa.AuthID, accountLabel, req.Model, upstreamModel, startTime)
 
 	return okEnvelope(streamResponse{Headers: streamHeaders()})
 }
@@ -163,11 +211,12 @@ func resolveTargetAuth(reqAuthID string, storageJSON []byte) *StoredAuth {
 	}
 
 	reqAuthID = strings.TrimSpace(reqAuthID)
+	cleanAuthID := strings.TrimSuffix(reqAuthID, ".json")
 	if reqAuthID != "" {
 		accounts, err := listAllAuthFiles()
 		if err == nil {
 			for _, acc := range accounts {
-				if acc.AuthID == reqAuthID || authFileNameFor(acc.APIKey) == reqAuthID+".json" {
+				if acc.AuthID == reqAuthID || acc.AuthID == cleanAuthID || authFileNameFor(acc.APIKey) == cleanAuthID+".json" {
 					if accountRoutable(acc) {
 						return acc
 					}
@@ -176,9 +225,19 @@ func resolveTargetAuth(reqAuthID string, storageJSON []byte) *StoredAuth {
 		}
 	}
 
-	// 从调度器选取
+	// 从调度器选取健康账号
 	if sa := pickActiveAuth(); sa != nil {
 		return sa
+	}
+
+	// 兜底：若全在冷却中，选用未禁用的有效账号避免死锁
+	accounts, err := listAllAuthFiles()
+	if err == nil && len(accounts) > 0 {
+		for _, acc := range accounts {
+			if !acc.Disabled && acc.APIKey != "" && !acc.TestFailed {
+				return acc
+			}
+		}
 	}
 
 	// 兜底：若配置文件里写死了 api_key，构造单账号

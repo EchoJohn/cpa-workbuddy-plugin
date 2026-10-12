@@ -18,12 +18,9 @@ var (
 	failoverRecords = make(map[string]*failoverEntry)
 )
 
-// 阶梯冷却时间：1分钟、3分钟、10分钟。
-var cooldownDurations = []time.Duration{
-	1 * time.Minute,
-	3 * time.Minute,
-	10 * time.Minute,
-}
+// failoverCooldown 是单次账号故障后的固定冷却窗口（对齐 workbuddy 成熟策略）。
+// 避免因瞬时并发满（429 code 3009）动辄封禁 1~10 分钟导致整个插件无账号可用。
+const failoverCooldown = 15 * time.Second
 
 // isAccountCoolingDown 检查账号是否处于冷却期。
 func isAccountCoolingDown(authID string) bool {
@@ -41,7 +38,7 @@ func isAccountCoolingDown(authID string) bool {
 	return time.Now().Before(entry.cooldown)
 }
 
-// noteAccountFailure 记录账号故障并设置阶梯退避。
+// noteAccountFailure 记录账号故障并设置固定 15 秒冷却。
 func noteAccountFailure(authID string, statusCode int, errMsg string) {
 	authID = strings.TrimSpace(authID)
 	if authID == "" {
@@ -58,12 +55,7 @@ func noteAccountFailure(authID string, statusCode int, errMsg string) {
 
 	entry.failCount++
 	entry.lastError = errMsg
-
-	tier := entry.failCount - 1
-	if tier >= len(cooldownDurations) {
-		tier = len(cooldownDurations) - 1
-	}
-	entry.cooldown = time.Now().Add(cooldownDurations[tier])
+	entry.cooldown = time.Now().Add(failoverCooldown)
 }
 
 // resetAccountFailover 成功调用后重置故障计数与冷却状态。
@@ -92,7 +84,9 @@ func shouldRotateOnUpstreamErr(statusCode int, errMsg string) bool {
 		strings.Contains(lower, "forbidden") ||
 		strings.Contains(lower, "rate limit") ||
 		strings.Contains(lower, "quota") ||
-		strings.Contains(lower, "insufficient") {
+		strings.Contains(lower, "insufficient") ||
+		strings.Contains(lower, "concurrency") ||
+		strings.Contains(lower, "3009") {
 		return true
 	}
 	return false

@@ -157,6 +157,7 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 		sa.TestFailed = true
 		saveAuthTestStatus(sa)
 		noteAccountFailure(sa.AuthID, 0, err.Error())
+		publishUsage(sa.AuthID, sa.Label, model, upstreamModel, start, usageTokensDetail{InputTokens: 1, OutputTokens: 0, TotalTokens: 1}, latency, 0, true, err.Error(), 0)
 		return testActiveResponse{
 			OK:        false,
 			Status:    "failed",
@@ -178,6 +179,7 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 		sa.TestFailed = true
 		saveAuthTestStatus(sa)
 		noteAccountFailure(sa.AuthID, resp.StatusCode, string(bodyBytes))
+		publishUsage(sa.AuthID, sa.Label, model, upstreamModel, start, usageTokensDetail{InputTokens: 1, OutputTokens: 0, TotalTokens: 1}, latency, resp.StatusCode, true, string(bodyBytes), 0)
 		return testActiveResponse{
 			OK:        false,
 			Status:    "failed",
@@ -192,10 +194,12 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 	n, _ := resp.Body.Read(buf)
 	latency := time.Since(start).Milliseconds()
 	firstChunk := string(buf[:n])
+	ttftNS := uint64(latency * 1000000)
 	if strings.Contains(firstChunk, `"type":"error"`) || strings.Contains(firstChunk, `"type": "error"`) {
 		sa.TestFailed = true
 		saveAuthTestStatus(sa)
 		noteAccountFailure(sa.AuthID, http.StatusForbidden, firstChunk)
+		publishUsage(sa.AuthID, sa.Label, model, upstreamModel, start, usageTokensDetail{InputTokens: 1, OutputTokens: 0, TotalTokens: 1}, latency, http.StatusForbidden, true, firstChunk, ttftNS)
 		return testActiveResponse{
 			OK:        false,
 			Status:    "failed",
@@ -209,6 +213,7 @@ func handleTestActiveWithAuth(sa *StoredAuth, model string) testActiveResponse {
 	sa.TestFailed = false
 	saveAuthTestStatus(sa)
 	resetAccountFailover(sa.AuthID)
+	publishUsage(sa.AuthID, sa.Label, model, upstreamModel, start, usageTokensDetail{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}, latency, resp.StatusCode, false, "", ttftNS)
 
 	return testActiveResponse{
 		OK:        true,

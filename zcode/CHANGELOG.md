@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.14] - 2026-10-12
+
+### Fixed
+- **用量日志对齐宿主统一管道与测试探活记账**：重写 `usage_feed.go`，将此前写入孤立路径 `~/.antigravity_cockpit/data/` 的错误路径改为自动探测宿主根目录 `<CLIProxyAPI root>/data/token-usage-feed.ndjson`，并增加 128MB 截断保护；完全对齐 `token-usage-tracker` 消费的嵌套 `tokens` 结构与 `latency_ms`、`ttft_ns`；将账号昵称（如 `ZCode 旅行者2435`）写入 `source` 字段；在面板「测试」按钮（`/test-active`）中接入用量上报，彻底消除“测试成功但在用量面板完全无记录”的假象。
+- **修复模型别名反向解析与 GLM 官方大小写归一化**（解决 `GLM-5.3` 可用但 `glm-5.3` 报 `400 unknown provider`）：
+  - `main.go` 将 `ExecutorModelScope` 从 `Static` 纠正为 `ExecutorModelScopeOAuth`，使宿主能正确将 `oauth-model-alias`（`GLM-5.3 -> glm-5.3`）绑定至该插件；
+  - `models.go` 补齐 `cacheModelAliases` 与 `resolveUpstreamModel`，实现客户端模型别名到上游权威模型的反向还原；
+  - 实现 `normalizeOfficialGLMModelID`：对齐 ZCode 官方客户端行为，将任何 `glm-` 开头的小写或变体模型名规范化为上游端点识别的官方大写格式（如 `glm-5.3` -> `GLM-5.3`, `glm-5.3-flash` -> `GLM-5.3-Flash`）；
+  - `MethodModelForAuth` 支持自动剥离 `.json` 后缀并从生效套餐的 entitlements 动态提取可用模型。
+- **优化流式换号重试与故障退避**：在 `handleExecStream` 中补齐 3 次换号重试循环；将阶梯退避优化为 15 秒固定冷却（对齐 `workbuddy`），换号错误判据纳入上游并发超限（`3009` / `concurrency`），消除单账号并发瞬间打满导致全插件死锁的缺陷。
+- **额度刷新稳定性与前端卡顿展示修复**：
+  - 修复 `panel.html` 后台轮询收尾时二次调用 `fetchAndPatchQuota` 带有 `&force=1` 重复轰炸上游频控的缺陷，改为直接读取缓存；
+  - `quota.go` 增加旧有效快照兜底，在上游瞬时网络波动或拉取失败时保留历史缓存；
+  - 账号 OAuth 授权与导入成功后自动调用 `EnqueueOne` 预热额度；
+  - `quotaHTML` 优化无数据展示，未获取额度时提示「未获取 (点刷新获取)」，消除永久转圈假死。
+
 ## [0.1.13] - 2026-10-12
 
 ### Fixed
