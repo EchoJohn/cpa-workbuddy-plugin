@@ -31,12 +31,12 @@
 ## 活动会话进展摘要
 
 - 当前会话（2026-10-12）：**Qoder / Qoder AI 移除自动探活全链路、完整下线 test_failed、签到收敛为 10:00/22:00（0.1.10 / 0.9.31，已提交发布）**：
-  - 核心根因：上游对**同账号突发调用**限流，在 HTTP 200 下返回业务码 `110: Billing daily count exceeded`。自动探活每轮 5 模型轮测 + 每账号 10 分钟节流，一天上千次真实推理调用稳定触发限流，并挤占真实推理的账号配额。（**修正上一轮"日配额耗尽"误判**：实测健康账号连发 20/20 成功、同账号 ok/bad 交替，属突发限流而非日额度打满。）
+  - 核心根因：上游对**同账号突发调用**限流，在 HTTP 200 下返回业务码 `110: Billing daily count exceeded`。自动探活每轮 5 模型轮测 + 每账号 10 分钟节流，一天上千次真实推理调用稳定触发限流，并挤占真实推理的账号配额。（**修正上一轮“日配额耗尽”误判**：实测健康账号连发 20/20 成功、同账号 ok/bad 交替，属突发限流而非日额度打满。）
   - 实施落地（两插件镜像，逐函数适配）：
-    1. **移除自动探活全链路**：删除 `doActivePing`（多模型轮测）、`triggerActivePing`、30 分钟节流状态、`refresh_runner.doFetchOne` 触发点与 watchdog 探活语义；后台只拉取值度快照与活动状态。**保留面板「测试」按钮的单次手动调用**（用户主动点击才发 1 次）。
+    1. **移除自动探活全链路**：删除 `doActivePing`（多模型轮测）、`triggerActivePing`、30 分钟节流状态、`refresh_runner.doFetchOne` 触发点与 watchdog 探活语义；后台只拉取额度快照与活动状态。**保留面板「测试」按钮的单次手动调用**（用户主动点击才发 1 次）。
     2. **完整下线 `test_failed` 机制**：打标/清标唯一宿主在自动探活内，探活移除后存量标签永久无法清除、账号会被永久排除出调度。故一并删除机制本体 `test_failed_tag.go`（+测试）、三处调度排除判据（`scheduler.go` / `active_auth.go` / `failover_retry.go`，`accountRoutable` 现只剩 `!cooling`）、`panel.go` 字段与 `panel.html` 「测试」筛选标签；启动时由 `stripAnomalyKey` 剥离存量 `test_failed` 标签。
     3. **签到时间收敛**：`checkinHours` 由 `[0,4,8,12,16,20]` 改为 `[10,22]`；新增 `shouldRunCheckinNow` 门控——`nextCheckinTime` 取 checkin 与 keepalive 并集唤醒，不门控会让签到在 keepalive 时刻（04:00/16:00 等）误触发。面板文案与 `schedule` 字段同步为 10:00/22:00。
-  - 验证全绿：`cgo-shim-build.py` 两插件 build/vet/test 全绿（各 ~7.0s）；`checkin_schedule_test.go`（新增，两插件逐字相同）经**哨兵变异**（`checkinHours` 回退 6 槽）后 4 用例精确 FAIL，证明真实进编译；6-review `STYLE: PASS`；`POLLUTION: PASS`；本地 HEAD `0a79db4` 与远端同步。
+  - 验证全绿：`cgo-shim-build.py` 两插件 build/vet/test 全绿（各 ~7.0s）；`checkin_schedule_test.go`（新增，两插件逐字相同）经**哨兵变异**（`checkinHours` 回退 6 槽）后 4 用例精确 FAIL，证明真实进编译；6-review `STYLE: PASS`；`POLLUTION: PASS`。
   - 文档：`doc/3-实施/2026-10-12_220000_Qoder去掉自动探活与签到时间调整实施总览.md`、`doc/4-bugs/2026-10-12_214500_Qoder上游110每日计费次数上限致账号误判测试失败根因诊断.md`、`doc/5-tests/2026-10-12_230000_*`、`doc/6-review/2026-10-12_231000_*`。
   - 待办：CI dispatch → 下载 assets → registry 更新 → 生产 `plugin-store install` 热重载 → 观测无新 `active ping` 日志、签到仅在 10:00/22:00 触发。
 
@@ -124,6 +124,179 @@
   - 现状：症状已随 Trae 流量退去自然平息（近 2h 该模型 599 次全部 workbuddy-provider、`client_gone` 0 次），但同名认领风险未消除。**0.2.7 发布与生产上线已完成**（后续 0.2.8 由并行会话发布并携带本修复，已在生产 `.so` 内确认 `filterExcludedModels` 存在）：CI run `38143777373` success、registry 同步、生产 `plugin-store install` 热重载 `registered version=0.2.7`、落盘 `.so` sha256 `23ea904c5bec…` 与产物一致、零容器重启、accounts 200（7 账号）、无 panic/fuse。
   - 待办（需用户拍板，已扩为批量）：生产治理动作 `PATCH /v0/management/oauth-excluded-models`（实测前缀只能是 `/v0`，`/v8` 下该路由 404；PATCH 是整表覆盖该 provider，须先 GET 合并）。按 24:03 实测的实时认领矩阵，traework 与 workbuddy / workbuddy-ai 各共享 **6** 个裸名（`deepseek-v4.1-flash`、`glm-5.2`、`glm-5.3`、`glm-5.3-flash`、`kimi-k2.6`、`minimax-m3`/`kimi-k3`），故建议一次决策整批而非只摘一个；`auto` 被四家同时认领属治理盲区，排除前须单独评估。当前触发面活跃：Trae 账号实时列表仍含该名字、7 账号中仅 1 个 active（剩 83 积分）、2 个 exhausted、近 60 分钟仍有 9 次配额错误，而该模型近 24h 无新请求 ⇒ 属已上膛未击发。
 
+- 当前会话（2026-10-11）：**Token 用量面板移除四个图表与导出图片并下线图表专用接口与聚合（workbuddy-token-usage 0.2.6 已发布并生产热重载验收通过）**：
+  - 用户诉求：图表功能全部移除、相关统计逻辑一并去掉以节省算力与响应体积；拍板边界为"只移除 4 个图表 + 同步移除图表专用接口与聚合"。
+  - 实现：`dashboard.go` 删除 visual/advanced 两个 grid section、tooltip、导出图片按钮、聚合粒度下拉、41 个图表函数 + 6 个占比口径函数 + canvas 导出及其状态与监听；`selectedModel`/`hiddenModels` 随唯一写入者消失而移除；来源筛选锚点改挂隐藏的 `#range`；Go 替换器删 3 条并改写 2 条模式串防静默失配。后端下线 `/stats/trends` 与 `StatsTrendResponse`/`queryStatsTrendByFilter`/`statsQueryTrend`，`/stats/initial` 去 `series`+`bucket_seconds`、`/costs` 去 `series`；另清理 72 条无主 CSS 与四语言包各 56 个图表文案键。收益：`dashboard.go` −21%（269,709 → 212,658 字节）。
+  - 门禁：`cgo-shim-build.py token-usage-tracker` 全绿；新增 `chart_endpoints_removed_test.go` 4 用例与 `test/token-usage/panel_chart_removal_repro.mjs` 38 项静态断言全 PASS（旧版本反证 24 项 FAIL）；两个执行型脚本的 trends 桩改为命中即抛错后仍全绿；字段变异反证触发 2 个 FAIL 后还原复绿。文档：`doc/2-需求/…222600_*`、`doc/5-tests/…222630_*`、`doc/6-review/…222710_*`（STYLE: PASS）。
+  - 发布与生产验收：commits `d7494dd`/`bbb142b`/`61a29a0`/`a7a7778`，CI run `38147308550` success（8 资产 ALL CHECKSUMS OK），`.so` sha256 `5feaf5bd2bd4…`；生产 `plugin-store install` 返回 `installed restart_required=false`，宿主日志 `host.go:408 plugin hot reloaded active_version=0.2.6 retired_version=0.2.5`，零容器重启。线上面板 217,901 字节回读：图表标记全 0、卡片与 `groups`/`requestRows`/`key:'provider'` 保留；接口层 `/stats/trends` 404、`/stats/initial`+`/costs` 无 `series`，`/stats`+`/stats/groups`+`/requests` 均 200。0.2.5 资产定向 prune（远端 0.2.6=200、0.2.5=404）。
+  - 后续发现并部分修复（0.2.7）：`store is closed` 失败分两类——A 类由宿主配置重载引发的换句柄窗口，每次带走 7–14 条真实丢失（`cfg_reload=0 且 reconfig=0` 的分钟 fail 恒为 0），0.2.7 已修（`ErrStoreClosed` 哨兵 + 配置指纹未变即复用句柄 + 关闭态不推进偏移，变异反证 `consumed = 1272/1284, want 0`）；B 类来自退役实例泄漏的 `feedImporterLoop`（`importerOnce` 每实例一份、关闭 store 不通知导入循环退出），实测 15 分钟内 0 次 reload/reconfigure/热重载仍有 248 条失败，但 `feed.ndjson.offset` 与文件字节数逐字节相等（94438247==94438247）、store 24h 11,114 ≥ new-api 5,046，证明是纯噪声与 CPU 空转、不丢数据，尚未修。据此撤回此前按 A+B 混算的「约 22%/最高 54% 持续丢失」高估。
+  - 0.2.7 发布与生产验收（2026-10-11 23:53–24:01）：CI run `38151946948` success（30 作业全绿）；`.so` 8,388,992 字节 sha256 `7e08d2d44adb…`，二进制内含新日志串且 `0.2.6` 计数为 0；commits `cbc1e74`/`dfa4bfb`/`29c9591`；生产 `plugin-store install` 前两次 502（CDN 边缘陈旧，重试即通）第三次 `installed restart_required:false`；宿主 `hot reloaded active_version=0.2.7 retired_version=0.2.6`；上线分钟出现 `reuse=1` 证明换句柄窗口已消除；`offset==size`、读接口与面板 217,901 字节与 0.2.6 完全一致；0.2.6 资产定向 prune（远端 200/404）。
+  - 0.2.8 发布与生产验收（2026-10-12 00:38–00:42）：CI run `38155105772` 30/30 全绿；`.so` 8,393,088 字节 sha256 `270cd96de2af…`，二进制内 `closed-store polls`=1 且 `store config unchanged`=1（两项修复同体）；commits 资产入库 + `89ddff0`(registry) + `f2e1c7c`(prune 0.2.7)；生产 `install?version=0.2.8` 首次即 `installed`，`active_version=0.2.8 retired_version=0.2.7`，`panic/fuse`=0，面板 217,901 字节与 0.2.7 逐字节同尺寸（图表标记仍全 0、`groups`/`requestRows`/`cards`/`provider` 保留）；远端 0.2.8=200、0.2.7=404。⚠️ `importer stopping after` 当前计数为 0 属**预期**：被退役的是无退出逻辑的 0.2.7 实例，该日志最早在下一次升级退役 0.2.8 时出现；同时泄漏代价已量化（安装后 2 分钟 `ok=72 fail=484`，比值随当天发布次数线性增长），旧协程需一次容器重启才能回收，交用户裁定。
+- 当前会话（2026-10-11）：**OAuth 未授权假成功漏洞修复与 TraeWork 推理流 Keep-Alive 闲置挂起提速，升级并发布 `qoderwork-provider 0.9.29`、`qoder-ai-provider 0.1.8`、`traework-provider 0.2.6`**：
+  - 用户反馈与目标：
+    1. 发现登录授权严重异常：还没有打开链接进行授权，系统就自动认证成功了（假成功漏洞），需要彻底修复并发布生产。
+    2. TraeWork 插件模型推理速度很慢，也要修复并发布。
+  - 根因定位与机制分析：
+    1. **未授权假成功根因**：`qoderwork/oauth.go` 与 `qoder-ai/oauth.go` 中的 `handlePollLogin` 存在历史兼容的 `Panel-import path` 代码。该逻辑通过对比 `hostAuthList()` 中凭据文件的 `CreatedAt` 是否大于登录发起时间 `startedAt` 来判定是否导入了新凭据；而宿主 watcher 与后台 watchdog 在刷新账号状态、积分与令牌时，会直接重置 `CreatedAt = time.Now()`，导致存量已有账号被误判为“新授权成功的账号”，在用户根本未访问授权链接的情况下直接返回 `success`。
+    2. **TraeWork 推理速度慢根因**：`traework/upstream.go` 的 `scanSSE` 事件扫描器在遇到 `event: done` 时仅调用 `recordDone()` 设置布尔标记，未跳出读取循环；由于上游服务端保持 HTTP/1.1 与 HTTP/2 Keep-Alive 长连接闲置，读取器持续死等网络 EOF 阻塞数十秒至数分钟直到超时，使客户端在模型早已生成完毕后仍无限转圈等待，直观感受推理极慢。
+  - 实施修复与系统实现：
+    1. **彻底移除 Panel-import 假成功代码**：在 `qoderwork` 与 `qoder-ai` 的 `oauth.go` 中彻底删除扫描本地凭据文件的漏洞逻辑，仅保留标准设备授权轮询 `pollDeviceToken` 与显式 PAT 导入；未在浏览器完成授权前严格返回 `status: pending`。
+    2. **引入 `errTraeStreamDone` 哨兵实现 SSE 即时退出**：在 `traework/upstream.go` 与 `stream.go` 中，遇到 `event: done` 时立即返回哨兵错误 `errTraeStreamDone`，`scanSSE` 捕获后立即以 `nil` 干净退出大循环并主动断开流，彻底消除 Keep-Alive 闲置死等；同时对齐默认会话调度模式 `scheduler_mode: session`。
+  - 门禁与发布闭环（全链路完成）：
+    - `python scripts/cgo-shim-build.py` 验证三插件（qoderwork / qoder-ai / traework）编译、vet 与单测 100% 全绿；新增 `traework/stream_done_immediate_test.go` 模拟阻塞连接并经哨兵必失败反证确证生效；
+    - 6-review 风格回归输出 `STYLE: PASS`（`doc/6-review/2026-10-11_200000_OAuth假成功移除与TraeWork即时终止提速_6-review.md`）；
+    - CI 构建：GitHub Actions Run `38137944167`（qoderwork 0.9.29）、Run `38140097876`（qoder-ai 0.1.8）、Run `38141539697`（traework 0.2.6）均 73/73 jobs 全绿完成；
+    - 资产入库与注册表同步：三插件各 8 个 Release 资产校验 `ALL CHECKSUMS OK` 并同步 `registry.json`（commits `1c28c3d`, `46e7784`, `c60f564`, `5340240`, `5713fb8`, `95c066f`）；
+    - 发布后清理：`prune-release-assets.py --apply` 清理 `0.9.28`、`0.1.7`、`0.2.5` 旧版资产释放 61 MB（commit `923a35f`），远端当前版本 200 OK、旧版本 404；
+    - 生产热重载部署与端到端行为验收：生产服务器调用 `plugin-store install` 全部 `installed` 且 `restart_required: false`（零容器重启），落盘 `.so` sha256 与本地 zip 100% 一致（qoderwork `4c896424…`、qoder-ai `4ae2fea7…`、traework `688647e9…`）；`/v8/management/oauth/status` 在未打开链接授权时连续轮询均稳定返回 `{"status":"wait"}`（彻底消除假成功）；推理测试 `traework-provider`（`deepseek-v4.1-flash`）耗时 `244ms`、`qoderwork-provider` 耗时 `1.482s`、`qoder-ai-provider` 耗时 `313ms`，流式即时退出无挂起。
+
+- 当前会话（2026-10-11）：**Token 用量统计插件请求明细表新增「服务商」列，发布部署 `workbuddy-token-usage 0.2.5`**：
+  - 用户诉求：用量统计插件新增一列说明「来自哪个服务商」，例如 `qoder-ai-provider`、`cursor-provider`、`qoderwork-provider`、`traework-provider`、`WorkBuddy AI`、`workbuddy-provider`、`zcode-provider`、`Antigravity` 等，需要知道请求来自哪个服务商。
+  - 现状侦察：后端 `usage_stats/request_log.go` 的 `RequestDetail` 内嵌 `Dimensions`，`/requests` 与 `/stats/groups` 响应天然携带 `provider`；各服务商插件写 feed 时都显式写 `provider`。缺口在 `usage_stats/dashboard.go` 的请求明细表 `requestColumns` 只有 `time/model/source/session_key/…`，**没有任何列暴露 `provider`**；维度汇总表 `dimensionColumns` 已有该列。
+  - 实现（用户拍板：原始 provider id 口径 + 两张表统一）：`requestColumns` 新增 `{key:'provider',label:'table.provider'}`；`requestDataCell` 与 `requestSortValue` 补 provider 分支；`exportCSV` 行数据插入 `record.provider`；四个语言包 `export.csvHeaders` 第 3 列插入服务商表头（提供商 / Provider）。CSV 表头与行数据经括号感知核对为 25 列严格对齐。
+  - 验证与门禁全绿：`python scripts/cgo-shim-build.py token-usage-tracker` build/vet/test 全绿；新增回归脚本 `test/token-usage/panel_provider_column_repro.mjs`（真实树状 DOM 桩驱动渲染）10/10 PASS，必失败哨兵（精确移除 requestColumns 的 provider 行）触发 4 项 FAIL 证明覆盖真实，`--legacy` 反证正确识别旧版缺口，`panel_perf_repro.mjs` 性能语义未回归；6-review `STYLE: PASS`；文档落盘 `doc/2-需求/`、`doc/5-tests/`、`doc/6-review/`（均为 `2026-10-11_114924_Token用量面板新增服务商列*`）。
+  - 发布闭环与生产验收：提交 `82ccd6b`（代码+文档）→ CI run `38137152772` success（push-run `38137140618` 同 commit 亦 success）→ assets `d976228`（8 资产，7/7 sha256 OK，产物内置版本 0.2.5 且含 provider 新功能特征串）→ registry `448d351` → prune `90d60fa`（仅删 0.2.4）。生产 `plugin-store install 0.2.5` 热重载生效：`active_version=0.2.5 retired_version=0.2.4`，落盘 `.so` sha256 `230e0680d50a91ba6262c7211e991f38c7d4e8a4d785c573eb31bf19fab50441` 与本地 zip 逐字节一致；`/stats` 200、`/requests` 返回 892 条真实记录且 `provider='workbuddy-provider'`、面板 HTML 确认含新列定义与中文「提供商」表头。零容器重启（`restart_required=false`）。
+- 当前会话（2026-10-11）：**Cursor Provider 0.1.4 修复模型获取与测试探活缺陷（Query 参数反序列化丢失、真实 256 模型展现、点号模型别名归一化与测试弹窗交互增强）**：
+  - 用户反馈与目标：用户指出 Cursor 插件的模型获取好像有问题，测试不通过，附带管理面板与测试弹窗截图。
+  - 核心根因精准收敛（双缺陷闭环）：
+    1. **为什么测试弹窗只有 7 个固定模型而卡片显示 256 个模型**：宿主 `CLIProxyAPI` 派发 RPC `management.handle` 时，URL 路径 `Path` 为纯路由 `/v0/management/plugins/cursor-provider/models`（不含 `?`），Query 参数封装在 `url.Values`（`map[string][]string`）。`cursor-provider` 内部 `managementRequest` 原代码将 `Query` 字段打了 `json:"-"` 忽略反序列化，且代码仅通过 `parseAuthIndexFromPath` 去从 `Path` 中解析 `?`，导致 `auth_index` 永远解析为空字符串 `""`；因此管理接口 `/models` 100% 触发 fallback 返回硬编码的 `defaultCursorModels`（7~8 个旧模型），使账号真实 DiscoverModels 获取到的 256 个模型被彻底屏蔽。
+    2. **为什么测试点选 `claude-3.5-sonnet` 报错 `Cursor stream failed: not_found`**：Cursor 上游 Connect-RPC `AgentService/Run` 遵循 Protobuf 模型契约，权威模型 ID 为连字符格式（如 `claude-3-5-sonnet`、`claude-3-5-haiku`、`claude-3-7-sonnet`、`gpt-4.5-preview`、`default`）；当 fallback 列表或外部请求传入带点号的 `claude-3.5-sonnet` 时，Cursor 服务端无该模型注册项，直接抛出 Connect-RPC end stream 错误 `not_found`。
+  - 实施修复与系统实现（v0.1.4）：
+    1. **对齐宿主 ManagementRequest 契约**：在 `management.go` 中将 `managementRequest` 字段 `Query` 正确声明为 `map[string][]string json:"Query"`；重构 `parseAuthIndexFromRequest` 优先提取 Query 参数并向下兼容 Path query string。
+    2. **优雅账号回退与真实模型展现**：新增 `getFirstAvailableCredential`，当请求未指定 `auth_index` 时自动获取首个可用账号的凭据执行 `DiscoverModels`，仅在系统无任何可用账号时才回退默认列表，确保账号拥有的 256 个真实模型顺利透传到前端。
+    3. **模型别名权威归一化机制（根除 `not_found`）**：在 `internal/openai/request.go` 中实现 `CanonicalModel`，将 `claude-3.5-sonnet` 等点号模型、版本后缀及常见别名统一映射为上游权威连字符 ID（`claude-3-5-sonnet` 等），并在 `handleTestActiveWithAuth` 与 `ParseChatRequest` 中统一接入；修正 `defaultCursorModels` 剔除错误点号项，补充 `default` 与 `gpt-4.5-preview`。
+    4. **前端测试弹窗海量模型搜索与秒开交互**：在 `assets/management.html` 的测试弹窗中增加实时搜索过滤输入框（`filterTestModels`），支持在 256 个海量模型中即时模糊过滤；打开弹窗时优先利用当前卡片已有的模型缓存即时秒开，后台并发异步校验刷新最新列表。
+  - 验证与门禁全绿：
+    - `python scripts/cgo-shim-build.py cursor` build/vet/test 全绿；
+    - 必失败哨兵反证测试成功拦截；
+    - Node 前端自动化测试 `node test/cursor/panel_auto_entry_repro.mjs` 场景全断言 100% 通过；
+    - 归档 6-review 风格回归报告 `doc/6-review/2026-10-11_180000_Cursor模型获取与测试探活修复_6-review.md`（STYLE: PASS）；
+    - 知识库沉淀 `Cursor-Connect-RPC模型命名契约与宿主管理Query反序列化修复.md` 并入网挂载。
+
+- 当前会话（2026-10-11）：**QoderWork 与 Qoder AI 两插件模型推理请求终止契约与长超时加固（对齐 WorkBuddy 成熟机制）**：
+  - 用户反馈与目标：测试出 Qoder 的两个插件模型请求有些问题，不稳定且有时候超时时间很长，要求参考 WorkBuddy 插件排查推理请求不完善之处并彻底修复。
+  - 核心根因定位（多维收敛）：
+    1. **同步 collect 路径遇到 [DONE] 误用 continue 导致死等长超时**：`collectUpstreamStreamQoder` 历史代码对 `bodyStr == "[DONE]"` 误用了 `continue` 而非 `break`；上游长连接 Keep-Alive 未断开时扫描器永久挂起，直到底层长超时。
+    2. **多种 [DONE] 协议形态无法被识别**：上游发送的顶层裸 `data: [DONE]`、带空格或换行的变体在反序列化 JSON 失败后被静默跳过，未能触发 `break`，流式响应迟迟不 close 导致客户端长时间转圈等待。
+    3. **换号重试 Context 丢失与挂死**：`rebuildRequestWithQoderAuth` 丢失了请求级 Context（硬编码 `context.Background()`），客户端断开时无法级联取消上游请求，后台 goroutine 持续占用资源；且换号前缺失会话粘性驱逐（`evictSessionBindingsForAuth`）。
+    4. **非流式执行无超时控制**：`doExecuteOnceQoder` 未施加 Context 超时控制，上游无响应时无限挂起。
+    5. **UTF-8 字符截断与 prompt 为空隐患**：`buildQoderBody` 中 `prompt[:30]` 按字节截断易切断多字节中文制造非法 UTF-8，且无 user 消息时直接 500 报错。
+  - 实施修复与系统实现（两插件完全对齐）：
+    1. **抽取出统一的 `parseQoderSSEChunk`**：同时识别顶层 `[DONE]`、嵌套信封 `[DONE]` 及扁平 OpenAI chunk，遇到终止即刻 `break` 退出循环并关闭流。
+    2. **全链路 Context 超时与会话驱逐对齐**：`rebuildRequestWithQoderAuth` 支持继承 Context；非流式与同步路径施加 10 分钟预算超时；换号前统一驱逐会话绑定。
+    3. **UTF-8 安全截断与 prompt 降级兜底**：使用 `[]rune(prompt)[:30]` 字符切片；`extractLatestUserPrompt` 增加非 user 消息优雅降级。
+    4. **消除 streamCloseOnce 内存泄露**：在 `once.Do` 执行后主动清理 map 条目。
+  - 发布闭环与生产验收（全链路完成）：
+    - 两个插件版本升级：`qoderwork-provider 0.9.28` 与 `qoder-ai-provider 0.1.7`；
+    - 代码与资产提交推送 main（commits `1852d06`, `ca7c730`, `2f02962`, `e2fd430`, `e384366`, `eba72ca`）；
+    - GitHub Actions CI 构建 run `38132055925` (qoderwork) 与 `38133167082` (qoder-ai) 全 73/73 jobs 全部成功；
+    - 两个插件各自 8 个 Release 资产（7 平台 zip + checksums）下载并校验 `ALL CHECKSUMS OK` 入库；
+    - `registry.json` 顺利同步回填并通过校验，远端 raw URL 14/14 资产全部 200 OK 且哈希一致；
+    - 生产服务器执行 `plugin-store install` 顺利热重载生效（`qoderwork-provider active_version=0.9.28` / `qoder-ai-provider active_version=0.1.7`，`restart_required=false` 零容器重启）；
+    - 生产真实账号探活验收：qoderwork 调用返回 `{"ok":true,"model":"auto","elapsed":"1.221s"}`，qoder-ai 调用返回 `{"ok":true,"model":"auto","elapsed":"182ms"}`，耗时大幅收敛，推理长超时与卡死彻底消除；
+    - 发布后清理：运行 `prune-release-assets.py --apply` 删除 0.9.27 与 0.1.6 历史资产，释放 40.6 MB 空间并推送到 main。
+
+- 当前会话（2026-10-11）：**新增「生产配置存储红线（不手工改数据库表）」到仓库级规则与发布 skill**：
+  - 用户口径：「写进发布 skill」「同时补进」——把上一轮澄清的「更新插件走 `plugin-store install`、CPA 自动维护 `config_store`、零人工介入」固化为强制红线。
+  - 依据与证据：`plugin-store install` 自动把 version + 7 平台 artifacts 写入 `config_store.content` 的 `plugins.configs.<id>` 并热重载（18:04:53 `zcode-provider` 0.1.3 install 前后两次配置快照 diff，唯一实质差异即该插件 version 与 artifacts）；反例为外部会话 `select content` 后二次序列化写回，两次致生产管理面 404 + 外网 502。
+  - 落点：
+    1. `AGENTS.md` / `CLAUDE.md`「项目特有规则 → 仓库与发布」在重启红线后新增「生产配置存储红线（不手工改数据库表，强制）」（两文件编辑后仍逐字节一致）；
+    2. 项目 skill `project-cpa-workbuddy-plugin-release-rules`：Step 13 新增「⛔ 更新插件不需要手工改数据库表（强制红线）」子章节、权责边界新增「不直接读写生产 `config_store` 表」条、踩坑清单追加第 54 条，`references/source-notes.md` 追加变更记录；
+    3. `PROJECT_MEMORY.md`（核心记忆 + 变更记录）、`PROJECT_HISTORY.md`（事件置顶 + 裁剪至 20 条 + 计数锚点同步）同步。
+  - 红线要点：改插件配置只走 install；非插件配置走 `PUT /v8/management/config`；数据库表**只读不写**（`select` 可以，读完绝不写回）；损坏铁证 = 原反斜杠被再转义一层（`\"` → `\\"`）+ `char(10)` 真实换行数 = 1。
+
+- 当前会话（2026-10-11）：**吸收「生产容器重启红线」到项目规则与 skill（非必要不重启 cpa 容器）**：
+  - 用户口径：非必要不要重启生产的 cpa 容器；插件的更新安装一般不需要重启（`plugin-store install` 热重载即生效）。
+  - 依据与风险：install 默认返回 `restart_required:false`，`docker logs cli-proxy-api | grep "hot reloaded"` 可见 `active_version` 生效；重启 `cli-proxy-api` 会中断在线流量并触发 60–80 秒冷启动（9 插件 + 模型刷新），属高成本、高影响操作。
+  - 落点（四处同步）：
+    1. `AGENTS.md` / `CLAUDE.md`「项目特有规则 → 仓库与发布」新增「生产容器重启红线（非必要不重启，强制）」；
+    2. 项目 skill `project-cpa-workbuddy-plugin-release-rules`：Step 13 校验项改用 `docker logs | grep "hot reloaded"` 判定（明确不需重启）、Step 13 新增重启红线条、权责边界末条由「提醒用户重启宿主」改为「不主动重启生产 cpa 容器」；
+    3. 项目 skill `project-cpa-workbuddy-plugin-host-config-safety-rules`：配置写入红线新增第 7 条（配置损坏恢复为重启的必要例外，恢复流程 Step 4 同步注明）；
+    4. 两个 skill 的 `references/source-notes.md` 追加变更记录；`PROJECT_MEMORY.md`（核心记忆 + 变更记录）与 `PROJECT_HISTORY.md`（事件 + 计数锚点）同步。
+  - 例外边界：仅在热重载经证据确认未生效（如踩坑 48 偶发形态）或生产配置损坏恢复等必要场景，且用户明确确认时才重启；否则保持容器运行，把重启时机交用户决定。
+
+- 当前会话（2026-10-11）：**Qoder AI 国际版签到活动 UMID 设备指纹与多账号风控拦截修复，发布部署 `qoder-ai-provider 0.1.6` 并完成生产真实 +100 积分与批量签到验收**：
+  - 用户反馈与目标：用户指出 Qoder AI 签到仍有问题，客户端显示可以签到（每日 100 Credits 20:35:13，每日 10:00 UTC+8 刷新），但生产上的账号一个都无法真正签到成功，积分没有增加，要求彻底修复。
+  - 核心排查与根因收敛：
+    1. **为什么客户端有活动而接口无活动**：反解官方客户端 `app.asar` 发现，客户端在调用 campaigns 接口前通过阿里云安全盾（Alibaba SecurityGuard / UMID）获取 `machineToken`（`P1gA...`），并计算出 18 字符的 `machineType` 与 `machineCode`；缺少这些设备头时，上游风控静默隐藏每日活动返回空列表。
+    2. **为什么多账号会签到失败**：上游实行同机每日限领 1 次的风控拦截策略，若多账号使用相同的机器标识，后续账号将返回 `BLOCKED: SAME_PERSON_ALREADY_CLAIMED` 阻断。
+    3. **为什么面板刷新延迟**：`checkin.go` 提取 `rewardCredits` 时使用 float64 类型断言，而底报文为 int64，导致断言失败且未即时回写缓存快照。
+  - 实施修复与系统实现（v0.1.6）：
+    1. **纯 Go 独立实现安全盾协议（零 CGO）**：在 `qoder-ai/umid.go`、`umid_codec.go`、`umid_crypto.go` 中完整实现 Section 0x1b 数据段封装、zlib 压缩、10 组密钥 AES-128-CBC 加密以及标准 XXH64 派生 `machineType`/`machineCode`，支持跨全部 7 平台构建。
+    2. **多账号确定性虚拟硬件指纹隔离**：按账号 UID 确定性生成独立的硬件特征并获取独立的设备凭证，遇到风控拦截时自动轮换重试（最多 3 次）。
+    3. **请求头注入与缓存即时刷新**：在 `campaignHeaders` 注入完整设备标识，签到成功后即时刷新缓存额度与签到快照。
+  - 验证与门禁全绿：
+    - 本地 `python scripts/cgo-shim-build.py qoder-ai` build/vet/test 全绿；
+    - 自动化单测覆盖算法金标准对照、解密还原与请求头断言，必失败反证全部通过；
+    - 6-review 风格回归归档 `doc/6-review/2026-10-11_150600_QoderAI签到UMID设备标识修复_6-review.md`（STYLE: PASS）。
+  - 发布闭环与生产验收：
+    - 源码 commit `973279c` 推送到 main；CI run `38084535313` 65 个 jobs 全部成功；
+    - 8 个 release 资产校验入库 commit `0952920`；registry.json 0.1.6 同步 commit `292ceb9`；
+    - 生产服务器执行 `plugin-store install qoder-ai-provider?version=0.1.6` 成功热重载生效；
+    - 生产账号 `u4aac824d` 调用签到返回成功，赠送/签到积分从 0 真实增加到 100；批量签到 `summary={already:6, no_activity:2, fail:0}` 全量通过！
+    - 发布后清理：删除 release-assets 下旧版 0.1.5 资产。
+
+- 当前会话（2026-10-11）：**消除 Cursor 双菜单重复注册问题，并全量对齐 WorkBuddy / ZCode 现代面板设计风格**：
+  - 用户反馈与目标：用户指出侧边栏菜单出现 2 个 Cursor，且面板与 workbuddy 完全不是一个风格，要求再次调整。
+  - 核心排查与根因收敛：
+    1. **为什么菜单会有 2 个**：`cursor/internal/plugin/management.go` 中的 `managementRegistration()` 此前在 `Resources` 中同时注册了 `{Path: "/panel", Menu: "Cursor"}` 与 `{Path: "/status", Menu: "Cursor"}`。宿主 CLIProxyAPI 在生成侧边栏菜单时为每一个带 `Menu` 属性的 Resource 创建一个菜单条目，导致侧边栏重复渲染两个 "Cursor" 菜单项。
+    2. **面板风格不一致**：Cursor 面板原本使用的是移植初期遗留的旧版 `management.html`，缺乏 CPA Management 统一主题变量、布局结构、操作栏、状态过滤胶囊、汇总概览与现代卡片网格系统。
+  - 实施修复与全量对齐：
+    1. **消除双菜单**：修改 `cursor/internal/plugin/management.go`，将 `managementRegistration().Resources` 收敛为仅声明 `/panel` 单一菜单项，同时保持后端路由对 `/status` 兼容别名及 `/enable-all`、`/disable-all` 的完整支持；同步更新 `handler_registration_test.go` 单测断言。
+    2. **面板全量对齐 WorkBuddy / ZCode 规范**：
+       - **主题与视觉体系**：接入 CPA 官方 `:root` / `:root[data-theme="white"]` / `:root[data-theme="dark"]` CSS 变量系统与主题监听同步脚本 `__cursorThemeSync`（支持嵌入父窗口 `MutationObserver` 监听与独立深浅色模式）；
+       - **布局与工具栏**：采用 `.wrap` 规范，增加 `导入 Token`、`导出凭证`、`全部启用`、`全部禁用`、实时搜索框与排序切换按钮；
+       - **状态过滤与汇总概览**：新增「全部 / 可用 / 禁用 / 异常」状态筛选胶囊与 `.summary` 统计概览卡片；
+       - **卡片网格与交互**：现代化响应式 `.grid` 与 `.card`，展示账号名称、AuthIndex、状态 Badge、累计请求（成功/失败）、支持的核心模型标签、测试探活按钮、启用/禁用切换与右上角红叉删除确认；
+       - **弹窗与组件**：导入 Token 弹窗（支持多行输入与备份恢复）、选模型测试探活弹窗、删除二次确认弹窗与右上角滑入式 Toast 通知系统。
+  - 验证与门禁全绿：
+    - `python scripts/cgo-shim-build.py cursor`：build、vet、test 全部通过（all green）；
+    - 必失败哨兵反证测试真实进编译执行；
+    - `node test/cursor/panel_auto_entry_repro.mjs`：免密直入与各种场景全部 100% PASS；
+    - `node --check`：内嵌脚本语法校验全部通过。
+
+- 当前会话（2026-10-11）：**Cursor Provider 0.1.2 对齐 WorkBuddy 核心能力（统一用量上报、JSON 备份恢复、面板搜索与概览统计）**：
+  - 用户反馈与目标：发现 Cursor 插件与 WorkBuddy 差距较大，要求同步 WorkBuddy 差距的功能，对 Cursor 插件进行系统改造。
+  - 核心实施与同步对齐：
+    1. **统一用量通道（Token Tracker 接入）**：新增 `cursor/internal/plugin/usage_feed.go`，在流式与非流式请求完成时异步追加 NDJSON 记录至 `<root>/data/token-usage-feed.ndjson`；在 `token-usage-tracker/usage_stats/auth_identity.go` 中注册 Cursor 供应商映射，打通统一大屏看板。
+    2. **备份 JSON 凭据恢复导入**：增强 `cursor/internal/plugin/import.go` 的 `importBackupJSON`，智能识别完整备份导出的 JSON（以及单/数组凭据），一键批量恢复账号，与导出功能形成闭环。
+    3. **面板体验全面升级**：在 `management.html` 顶部增加账号状态概览统计条（总数、活跃、禁用、可用模型），操作栏增加实时模糊搜索过滤输入框，导入弹窗新增从备份恢复独立区域。
+  - 验证与门禁全绿：`python scripts/cgo-shim-build.py cursor` 与 `token-usage-tracker` 全绿；必失败哨兵反证测试真实执行；`node test/cursor/panel_auto_entry_repro.mjs` 11 项断言全通过；`node --check` 语法检查全部通过；6-review 风格回归 `STYLE: PASS`。
+
+- 当前会话（2026-10-11）：**兄弟插件同步 workbuddy 路由能力（批次 A 至 D 全量本地实施收口，严格无提交无发布）**：
+  - 用户目标：按顺序推进兄弟插件同步 workbuddy 路由能力，直到全部完成，先在本地全部完成，不提交、不发布。
+  - 核心实施与全批次收口：
+    1. **批次 A（traework 默认会话路由与配置动态联动修复）**：`scheduler_mode` 默认值与描述从 `off` 改为 `session`，并在 `config.go:175` 补齐 `setSchedulerMode(v)` 彻底打通配置与调度器状态脱钩，新增 `TestSchedulerMode_DefaultIsSession` 单测锁定。
+    2. **批次 B（workbuddy-ai 补齐路由回归单测资产）**：为 `workbuddy-ai` 移植并补充 `scheduler_test.go`、`session_auth_test.go`、`routing_exclusion_test.go`、`failover_retry_test.go`、`accountFailover_test.go`，消除未测试盲区。
+    3. **批次 C（qoderwork 深度路由改造）**：原位精简 `watchdogLoop`（移除保号池翻转，保留 10m 计数落盘与清扫驱动）；移植 `test_failed_tag.go` 并在 `active_ping.go` 补齐打标清标；`scheduler.go` 引入硬排除、低积分优先排序与全灭 defer；彻底移除 `preserve.go` 及相关引用；面板三文件接入 `test_failed` 并移除保号 UI；补齐单测全绿。
+    4. **批次 D（qoder-ai 镜像结构改造与低积分选卡）**：镜像批次 C 成熟改法，并在 `active_auth.go` 补齐原计划独缺的 `accountLowerCredits` 与 `ensureDefaultActiveAuth` 低积分选卡逻辑，彻底卸载 `preserve.go` 并补齐单测。
+  - 验证证据与门禁全绿：五插件（traework、workbuddy-ai、qoderwork、qoder-ai 及基线 workbuddy）本地 `cgo-shim-build.py` build/vet/test 全部通过，必失败哨兵反证全部通过，`node` 脚本对 panel.html 语法校验全绿，归档 6-review 风格回归报告 `doc/6-review/2026-10-11_041000_兄弟插件同步workbuddy路由能力全量收口_6-review.md`（STYLE: PASS）。
+  - 本地保护：严格执行用户当轮显式约束，零提交、零推送、零发布，全部修改完整安全保留在工作区。
+
+- 当前会话（2026-10-11）：**自动探活多模型轮测实施收口（v1.1 completed）与下一阶段兄弟插件路由能力同步推进**：
+  - 实施计划收口：正式更新《自动测试多模型依次探活改造实施总览》（`doc/3-实施/2026-10-09_233000_自动测试多模型依次探活改造_实施总览.md`）为完成态（`status: completed`，`version: v1.1`），TASK-001 至 TASK-005 全部勾选完成，对齐 `doc/6-review/2026-10-09_234800_自动测试多模型依次探活改造_6-review.md`（STYLE: PASS）。
+  - 核心能力巩固：workbuddy / workbuddy-ai / traework 具备最多 5 模型随机轮测、单次 20s 超时、整轮 30s 预算熔断、any-success 快速退出且清标，彻底阻断单模型偶发故障导致账号被调度器误杀硬排除。
+  - 下一阶段计划推进：跟进《兄弟插件同步 workbuddy 路由能力实施总览》（`doc/3-实施/2026-10-10_235000_兄弟插件同步workbuddy路由能力实施总览.md`），分批次实施：
+    - **批次 A（低风险）**：`traework` 对齐 `scheduler_mode: session` 默认值与描述（4 处改动）；
+    - **批次 B（纯测试）**：`workbuddy-ai` 移植与补齐完整路由回归单测资产；
+    - **批次 C（结构改造）**：`qoderwork` 迁移 watchdog 计数落盘驱动源、接入 `test_failed` 机制、彻底移除 `preserve` 保号池并补齐全灭 defer 与低积分优先排序；
+    - **批次 D（结构改造）**：`qoder-ai` 镜像批次 C 结构改造并补 `ensureDefaultActiveAuth` 低积分比较。
+
+- 当前会话（2026-10-11）：**Cursor Provider 0.1.1 补充官方高清图标、路由规范对齐、选模型测试探活与可用性完善**：
+  - 用户反馈与目标：继续完善 Cursor 插件，补充图标等等，解决 Cursor 插件目前基本无法使用的问题。
+  - 核心问题排查与解决：
+    1. **图标缺失与破图**：补充官方高清图标至 `assets/icons/Cursor.png`（640×640 32-bit RGBA），并在 `cursor/internal/plugin/handler.go` 配置 `pluginLogoURL`、在 `registry.json` 中配置 `logo` 字段，并在面板 header 左侧增加品牌 Logo。
+    2. **面板路由 404 致无法打开**：CPA 宿主后台管理点击面板默认请求 `/v0/resource/plugins/cursor-provider/panel`，而原插件仅注册 `/status`；在资源路由中补充标准 `/panel` 并兼容 `/status` 别名。
+    3. **管理接口 `/accounts` 缺失**：增加 `GET /plugins/cursor-provider/accounts` 别名路由指向账号状态，对齐全仓库统一接口规范。
+    4. **缺少模型测试探活**：新增 `GET /models?auth_index=` 与 `POST /test-active` 路由，面板卡片新增「测试」按钮与 `testModal` 选模型测试弹窗，支持按指定模型测试连通性，并在 401 时自动刷新凭据重试。
+    5. **模型拉取优雅降级**：增加 `defaultCursorModels`（auto、cursor-fast、composer-2.5、claude-3.5-sonnet、gpt-4o 等），当上游 GetUsableModels 动态拉取失败时自动兜底，避免整个账号变成 unavailable 且模型为空。
+    6. **免密直入与主题同步**：支持同源父页/URL/会话存储三级密钥自动加载，移除冗余额度区块，嵌入时镜像父页 `data-theme`。
+  - 验证与门禁全绿：`python scripts/cgo-shim-build.py cursor` build/vet/test 全绿；必失败哨兵反证证实单测真实生效；`node test/cursor/panel_auto_entry_repro.mjs` 11 项断言全通过；`python scripts/validate-registry.py` 通过。
+
+- 当前会话（2026-10-10）：**修复 TraeWork 签到 9074 风控拦截与自动签到调度器，发布部署 `traework-provider 0.2.5` 并验证生产账号「用户04878311608」签到成功**：
+  - 核心排查与根因：`deviceIDFor` 拼接 `-userID` 破坏 16 位纯数字契约导致 9074 拦截；`randomDeviceID` 补零造成畸形设备号；`checkinAccount` 遇拦截未轮换设备号。
+  - 修复验收：确定性 16 位设备号派生与轮换重试机制；本地 cgo-shim 全绿与哨兵反证；CI 64 jobs 成功，生产部署 0.2.5 并验证多账号签到成功。
+
 <!-- BEGIN RECENT PROJECT SESSIONS -->
 ## 最近 5 个同项目会话
 
@@ -140,42 +313,199 @@
 {
   "version": 4,
   "registry_schema": "task_plan_projection_registry",
-  "registry_updated_at": "2026-10-12T04:30:00Z",
+  "registry_updated_at": "2026-10-10T17:18:39.284727Z",
   "projections": [
     {
-      "projection_id": "SESSION/all-plugins-panorama-plan-20261012",
-      "session_id": "current-session",
+      "projection_id": "SESSION/30608b3616fa2311bfb720a2776c09ac96b2738601ec3752b03a252c810cdb70",
+      "session_id": "01a115da-13cb-7f90-ac94-25c133fdc31e",
       "projection_origin": "synthesized",
       "synthesis_mode": "exact",
       "state": "active",
-      "plan_key": "IMPL-ALL-PLUGINS-PANORAMA-PLAN-20261011",
-      "source_document": "doc/3-实施/2026-10-11_043000_九大插件全景架构与演进计划总览.md",
-      "plan_fingerprint": "b78912ef34c90ab12de45bc67fa8901234567890abcdef1234567890abcdef12",
-      "updated_at": "2026-10-12T04:30:00Z",
+      "plan_key": "IMPL-CURSOR-PROVIDER-PORT-20261007",
+      "source_document": "doc/3-实施/2026-10-07_Cursor插件移植与Token导入实施总览.md",
+      "plan_fingerprint": "9eea12fd114fb3e34cb60dd2a60eceb2eacd227a7e9a481c5b3f73c954a2a3b6",
+      "updated_at": "2026-10-07T12:25:35Z",
       "steps": [
         {
           "id": "TASK-001",
-          "step": "[TASK-001] 兄弟插件路由内核同步（traework/workbuddy-ai/qoderwork/qoder-ai）与单测覆盖",
+          "step": "[TASK-001] 移植源码并统一标识",
           "status": "completed"
         },
         {
           "id": "TASK-002",
-          "step": "[TASK-002] ZCode 插件移植与多账号、指纹 mimic、现代控制台及用量通道对齐",
+          "step": "[TASK-002] 令牌解析与导入",
           "status": "completed"
         },
         {
           "id": "TASK-003",
-          "step": "[TASK-003] Cursor 插件体验升级（消除双菜单、现代控制台、备份恢复与用量流接入）",
+          "step": "[TASK-003] 导出删除启停接口",
           "status": "completed"
         },
         {
           "id": "TASK-004",
-          "step": "[TASK-004] Qoder 与 Qoder AI 禁用后台自动探活机制（每日请求上限保护）",
+          "step": "[TASK-004] 面板与本地回归收口",
           "status": "completed"
         },
         {
           "id": "TASK-005",
-          "step": "[TASK-005] 九大插件本地 cgo-shim 全量编译单测与全景计划收口",
+          "step": "[TASK-005] 发布与部署",
+          "status": "in_progress"
+        }
+      ]
+    },
+    {
+      "projection_id": "SESSION/df86ce8afa18a9515072ffdfb460ee7e85402285d28ea505ed37f9133e10c0e8",
+      "session_id": "01a115b7-7f04-7b81-8e96-cb269a144fa4",
+      "projection_origin": "synthesized",
+      "synthesis_mode": "exact",
+      "state": "active",
+      "plan_key": "IMPL-CURSOR-PANEL-AUTOENTRY-20261008",
+      "source_document": "doc/3-实施/2026-10-08_Cursor面板免密直入与workbuddy对齐实施总览.md",
+      "plan_fingerprint": "16acf9f349058ff187e5a3a7fb9bcc2f856cc447c47c98da76c8206319350112",
+      "updated_at": "2026-10-07T17:15:57Z",
+      "steps": [
+        {
+          "id": "TASK-001",
+          "step": "[TASK-001] 面板免密直入改造：密钥区默认隐藏、启动自动加载、移除订阅额度说明区块",
+          "status": "in_progress"
+        },
+        {
+          "id": "TASK-002",
+          "step": "[TASK-002] 测试与本地回归：management_test 断言更新、面板自动进入回归脚本、cgo-shim-build 全绿",
+          "status": "pending"
+        },
+        {
+          "id": "TASK-003",
+          "step": "[TASK-003] 文档与版本收口：DESIGN/CHANGELOG/VERSION 0.1.1、6-review 风格回归",
+          "status": "pending"
+        },
+        {
+          "id": "TASK-004",
+          "step": "[TASK-004] 发布与生产部署验证：commit/push/CI/资产入库/registry/热重载验收",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "projection_id": "SESSION/20e8ec46dba59302295da066dda5bf5a2a66b4529a4bae4bb9cdc4698f67c8d1",
+      "session_id": "01a11ba7-3193-7ab0-9618-11075ecaba63",
+      "projection_origin": "synthesized",
+      "synthesis_mode": "exact",
+      "state": "inactive",
+      "plan_key": "IMPL-TOKEN-USAGE-PERF-ICON-20261008",
+      "source_document": "doc/3-实施/2026-10-08_Token用量面板性能优化与插件图标修复实施总览.md",
+      "plan_fingerprint": "e41673af031195fb8992a957a1a20efa15ce3eac1bf8bc3dee3e5f2c8de406cc",
+      "updated_at": "2026-10-08T17:23:47.766782Z",
+      "steps": [
+        {
+          "id": "TASK-001",
+          "step": "[TASK-001] 后端移除 SSE 通道（路由、函数、通知序列、测试同步）",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-002",
+          "step": "[TASK-002] 面板前端改造（去自动刷新、新增 last_1_hour、本地化）",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-003",
+          "step": "[TASK-003] 图标资产与注册（新图标入库、Logo URL、registry logo）",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-004",
+          "step": "[TASK-004] 版本与文档收口（VERSION/main.go bump、6-review、测试文档）",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-005",
+          "step": "[TASK-005] 发布与生产部署验证",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "projection_id": "SESSION/6d9b35f8481be4fb66fbe631557cd5e155caef128cb55e64f7b4d110746dca96",
+      "session_id": "01a11b9b-eb7d-7830-afed-7c8dd64c6629",
+      "projection_origin": "synthesized",
+      "synthesis_mode": "exact",
+      "state": "inactive",
+      "plan_key": "IMPL-WBAI-CHECKIN-20261008",
+      "source_document": "doc/3-实施/2026-10-08_WorkBuddyAI国际版签到改造实施总览.md",
+      "plan_fingerprint": "6cd82fd431385b7bf05b43a41d7600cfc93bd4126cc463516ef891fb986687b5",
+      "updated_at": "2026-10-08T20:50:04.091579Z",
+      "steps": [
+        {
+          "id": "TASK-001",
+          "step": "[TASK-001] 后端签到数据链路：新增 checkin.go，扩展缓存 3 路与面板回填",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-002",
+          "step": "[TASK-002] 后端控制面与调度：/checkin 路由、配置开关、调度器合并",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-003",
+          "step": "[TASK-003] 面板签到改造与 vm 回归脚本",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-004",
+          "step": "[TASK-004] 文档与版本收口：bump 0.1.8、6-review",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-005",
+          "step": "[TASK-005] 发布与生产部署验收",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "projection_id": "SESSION/5818ea886692422d8a462f2eb89e9b453f44422b609457bddc7ce1391942abe6",
+      "session_id": "01a1219b-6aff-7fb2-822f-d9160626c22c",
+      "projection_origin": "synthesized",
+      "synthesis_mode": "exact",
+      "state": "inactive",
+      "plan_key": "IMPL-QODERWORK-CHECKIN-FALSE-SUCCESS-20261010",
+      "source_document": "doc/3-实施/2026-10-10_QoderWork签到假成功修复实施总览.md",
+      "plan_fingerprint": "7aab74187dac06f2d24f3b680a2913cfb6f68784eaf7f6a7f403d3a5d2607581",
+      "updated_at": "2026-10-11T00:30:00.000000Z",
+      "steps": [
+        {
+          "id": "TASK-001",
+          "step": "[TASK-001] 取证与根因冻结：宿主桥状态码解码错误",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-002",
+          "step": "[TASK-002] 修复 host_bridge.go：抽出 parseHostHTTPDoResult",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-003",
+          "step": "[TASK-003] 收紧 billing.go：performCheckinCall 缺 success 字段返回失败",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-004",
+          "step": "[TASK-004] 新增 host_bridge_test.go 回归并完成反证与本地全绿",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-005",
+          "step": "[TASK-005] 版本与文档收口：bump 0.9.26、CHANGELOG、5-tests、6-review",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-006",
+          "step": "[TASK-006] 发布链：commit、push、CI、assets、registry、远端验证",
+          "status": "completed"
+        },
+        {
+          "id": "TASK-007",
+          "step": "[TASK-007] 生产部署与账号 u09a5b6ab 行为验收",
           "status": "completed"
         }
       ]
