@@ -24,6 +24,11 @@ func accountRoutable(sa *StoredAuth) bool {
 	if isAccountCoolingDown(sa.AuthID) {
 		return false
 	}
+	if q := cachedQuota(sa.AuthID); q != nil {
+		if q.PlanStatus == "expired" || q.PlanStatus == "inactive" || (q.PlanID == "" && q.PlanName == "") {
+			return false
+		}
+	}
 	return true
 }
 

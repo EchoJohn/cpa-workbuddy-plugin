@@ -62,6 +62,11 @@ func pickNextAuth(currentAuthID string) (nextAuthID string, nextSA *storedAuth, 
 		if isAccountCoolingDown(id) {
 			continue
 		}
+		// 跳过已耗尽或额度低于安全红线的残血账号，防止同请求换号再次中断
+		remain, lowOrExhausted := cachedCreditsScore(id)
+		if lowOrExhausted || (remain >= 0 && remain < loadedMinRoutableCredits()) {
+			continue
+		}
 		// Skip candidates with no usable auth index — we can't load
 		// their stored body, so retrying on them would fail
 		// identically and burn a budget slot.

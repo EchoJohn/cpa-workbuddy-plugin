@@ -1,5 +1,15 @@
 # TraeWork Plugin Changelog
 
+## 0.2.10
+
+### Feat & Fix - 设立安全缓冲额度红线 (minRoutableCredits=20)、健康平摊调度与换号过滤
+
+- 变更要点:
+  1. 设立安全缓冲额度红线 (`min_routable_credits`，默认 20，可配置)：低于阈值的残血账号硬排除出路由池，防止推理中途断开。
+  2. 调度策略逆转：废除残血优先（Low-Credit-First）升序排序，存活健康候选平摊轮询（Round-Robin）。
+  3. 请求内换号链过滤：`pickNextAuth` 跳过 `remain < min_routable_credits` 账号。
+  4. 面板状态与视觉对齐：新增 `low_credits` 状态与「低额保护」徽标。
+
 ## 0.2.9
 
 ### Feat - 引入官方规格矩阵自适应 max_tokens 计算

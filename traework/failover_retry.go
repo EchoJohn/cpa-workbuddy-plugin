@@ -56,6 +56,11 @@ func pickNextAuth(currentAuthID string) (nextAuthID string, nextSA *traeAuth, ok
 		if isTestFailed(id) {
 			continue
 		}
+		// 跳过已耗尽或额度低于安全红线的残血账号，防止同请求换号再次中断
+		remain, lowOrExhausted := cachedCreditsScore(id)
+		if lowOrExhausted || (remain >= 0 && remain < loadedMinRoutableCredits()) {
+			continue
+		}
 		if strings.TrimSpace(f.AuthIndex) == "" {
 			continue
 		}

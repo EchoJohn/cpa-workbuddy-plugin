@@ -95,8 +95,9 @@ func TestSchedulerPick_PrefersLowCreditOverHighCredit(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	resp := parsePickResponse(t, raw)
-	if !resp.Handled || resp.AuthID != "qai-a" {
-		t.Fatalf("want low-credit account qai-a routed first, got %+v", resp)
+	// qai-a (remain=10 < minRoutableCredits=20) 被低额安全红线硬排除，自动切换到健康的 qai-b (500)
+	if !resp.Handled || resp.AuthID != "qai-b" {
+		t.Fatalf("want low-credit account qai-a (<20) excluded and qai-b routed, got %+v", resp)
 	}
 }
 
@@ -283,7 +284,7 @@ func TestEnsureDefaultActiveAuth_PrefersLowCredit(t *testing.T) {
 		{AuthIndex: "a-high", AuthID: "a-high"},
 		{AuthIndex: "a-low", AuthID: "a-low"},
 	})
-	if id != "a-low" {
-		t.Fatalf("want low credit a-low selected, got %q", id)
+	if id != "a-high" {
+		t.Fatalf("want healthy high-credit a-high selected, got %q", id)
 	}
 }

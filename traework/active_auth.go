@@ -11,6 +11,7 @@ import (
 
 var (
 	activeAuthID string
+	activeAuthRR uint64
 	activeAuthMu sync.RWMutex
 )
 
@@ -24,6 +25,9 @@ func setActiveAuthID(id string) {
 	id = strings.TrimSpace(id)
 	activeAuthMu.Lock()
 	activeAuthID = id
+	if id == "" {
+		activeAuthRR = 0
+	}
 	activeAuthMu.Unlock()
 }
 
@@ -68,25 +72,22 @@ func pickActiveAuth(candidates []activeAuthCandidate) string {
 		}
 	}
 
-	var next string
+	var ready []string
 	for _, c := range candidates {
 		if !c.Disabled && !c.Exhausted && accountRoutable(c.ID) {
-			next = c.ID
-			break
+			ready = append(ready, c.ID)
 		}
 	}
-	if next == "" {
-		// All candidates exhausted/disabled/unavailable: no healthy account
-		// exists. Return "" WITHOUT changing the panel selection so
-		// handleSchedulerPick defers (Handled: false) to the host's built-in
-		// scheduler, which can fail over to other providers' accounts (e.g.
-		// workbuddy). The selection is restored automatically once an account
-		// recovers.
+	if len(ready) == 0 {
 		return ""
 	}
-	if next != "" && next != cur {
-		setActiveAuthID(next)
+	activeAuthMu.Lock()
+	next := ready[int(activeAuthRR%uint64(len(ready)))]
+	activeAuthRR++
+	if next != cur {
+		activeAuthID = next
 	}
+	activeAuthMu.Unlock()
 	return next
 }
 
@@ -101,6 +102,7 @@ type traeAccountView struct {
 	Remain        int64        `json:"remain"`
 	Credits       *traeCredits `json:"credits,omitempty"`
 	Exhausted     bool         `json:"exhausted"`
+	LowCredits    bool         `json:"low_credits"`
 	Disabled      bool         `json:"disabled"`
 	TestFailed    bool         `json:"test_failed"` // scheduled active-ping failed while credits remained
 	CheckinToday  bool         `json:"checkin_today"`
@@ -148,7 +150,7 @@ func ensureDefaultActiveAuth(accounts []traeAccountView) string {
 			firstReady = a.AuthID
 			continue
 		}
-		if accountLowerCredits(a.AuthID, firstReady) {
+		if accountHigherCredits(a.AuthID, firstReady) {
 			firstReady = a.AuthID
 		}
 	}
@@ -175,16 +177,22 @@ func ensureDefaultActiveAuth(accounts []traeAccountView) string {
 // panel-selection rules and documented as the same predicate family
 // scheduler.pick applies before ordering candidates.
 func accountRoutable(authID string) bool {
-	return !isAccountCoolingDown(authID) && !isTestFailed(authID)
+	if isAccountCoolingDown(authID) || isTestFailed(authID) {
+		return false
+	}
+	remain, lowOrExhausted := cachedCreditsScore(authID)
+	if lowOrExhausted || (remain >= 0 && remain < loadedMinRoutableCredits()) {
+		return false
+	}
+	return true
 }
 
-// accountLowerCredits reports whether left has fewer remaining credits than
-// right. Unknown credits rank LAST (never ahead of a measured account).
-func accountLowerCredits(left, right string) bool {
+// accountHigherCredits 比较两个健康账号的充裕度，积分更多者排在前面；未测 (-1) 排最后。
+func accountHigherCredits(left, right string) bool {
 	leftScore, _ := cachedCreditsScore(left)
 	rightScore, _ := cachedCreditsScore(right)
 	if (leftScore < 0) != (rightScore < 0) {
-		return rightScore < 0
+		return leftScore >= 0
 	}
-	return leftScore < rightScore
+	return leftScore > rightScore
 }

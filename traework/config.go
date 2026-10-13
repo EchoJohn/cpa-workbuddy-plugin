@@ -169,6 +169,10 @@ func applyConfigLines(cfg *traeConfig, lines []string) {
 			if v := strings.TrimSpace(val); v != "" {
 				cfg.IDEVersionCode = v
 			}
+		case "min_routable_credits":
+			if n, err := strconv.ParseInt(strings.TrimSpace(val), 10, 64); err == nil && n >= 0 {
+				setMinRoutableCredits(n)
+			}
 		case "scheduler_mode":
 			v := strings.TrimSpace(val)
 			if v == schedulerModeOff || v == schedulerModeCredits || v == schedulerModeSession {

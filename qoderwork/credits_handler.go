@@ -306,6 +306,7 @@ func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
 			} else {
 				acct["credits"] = cr
 				acct["exhausted"] = isCreditsExhausted(cr)
+				acct["low_credits"] = cr != nil && !isCreditsExhausted(cr) && cr.TotalRemain < loadedMinRoutableCredits()
 				// Also fetch plan so the badge updates on lazy load.
 				acct["plan"] = fetchPaymentType(sa)
 				// Update cache so subsequent dashboard loads see fresh data.

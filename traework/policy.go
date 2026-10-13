@@ -4,9 +4,41 @@
 // (4011 rate-limit, quota markers, device-dedupe wording).
 package main
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
 
 const httpStatusPaymentRequired = 402
+
+// defaultMinRoutableCredits 是安全缓冲额度红线默认值（20 点）。
+// 剩余额度低于该阈值的账号不再承载新请求，防止推理中途断开。
+const defaultMinRoutableCredits int64 = 20
+
+var (
+	minRoutableCredits   int64 = defaultMinRoutableCredits
+	minRoutableCreditsMu sync.RWMutex
+)
+
+// loadedMinRoutableCredits 返回当前生效的安全缓冲额度红线。
+func loadedMinRoutableCredits() int64 {
+	minRoutableCreditsMu.RLock()
+	defer minRoutableCreditsMu.RUnlock()
+	return minRoutableCredits
+}
+
+// setMinRoutableCredits 设置安全缓冲额度红线并返回清理函数，供单测或动态配置使用。
+func setMinRoutableCredits(n int64) func() {
+	minRoutableCreditsMu.Lock()
+	old := minRoutableCredits
+	minRoutableCredits = n
+	minRoutableCreditsMu.Unlock()
+	return func() {
+		minRoutableCreditsMu.Lock()
+		minRoutableCredits = old
+		minRoutableCreditsMu.Unlock()
+	}
+}
 
 // hardCreditMarkers match upstream bodies that indicate the account's credit
 // quota is exhausted (as opposed to a transient/rate-limit failure).

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.18] - 2026-10-13
+
+### Feat & Fix
+- **套餐健康状态路由门控与换号重试判据加固**：
+  - `accountRoutable` 校验缓存套餐状态，过期/失效账号硬排除出调度候选集；
+  - `shouldRotateOnUpstreamErr` 补齐 `exceeded the quota`、`14018` 与 `额度已用尽` 关键词换号重试。
+
 ## [0.1.17] - 2026-10-13
 
 ### Feat

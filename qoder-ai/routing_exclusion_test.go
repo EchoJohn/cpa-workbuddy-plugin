@@ -40,8 +40,9 @@ func TestSchedulerPick_LowCreditFirstAndUnknownLast(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	resp := parsePickResponse(t, raw)
-	if !resp.Handled || resp.AuthID != "qai-low" {
-		t.Fatalf("want lowest-credit qai-low routed first, got %+v", resp)
+	// qai-low (12 < 20) 低于安全红线被硬排除，qai-mid (300) 排在 qai-unknown (-1) 之前被选中
+	if !resp.Handled || resp.AuthID != "qai-mid" {
+		t.Fatalf("want healthy qai-mid routed (qai-low < 20 excluded), got %+v", resp)
 	}
 }
 

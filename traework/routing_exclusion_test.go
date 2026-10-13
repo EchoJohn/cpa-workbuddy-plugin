@@ -95,8 +95,9 @@ func TestSchedulerPick_LowCreditFirst(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	resp := parsePickResponse(t, raw)
-	if !resp.Handled || resp.AuthID != "tr-low" {
-		t.Fatalf("want lowest-credit tr-low routed first, got %+v", resp)
+	// tr-low (12 < 20) 低于安全红线被硬排除，tr-mid (300) 被选中
+	if !resp.Handled || resp.AuthID != "tr-mid" {
+		t.Fatalf("want healthy tr-mid routed (tr-low < 20 excluded), got %+v", resp)
 	}
 }
 

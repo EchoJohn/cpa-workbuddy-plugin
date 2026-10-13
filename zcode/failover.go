@@ -84,6 +84,9 @@ func shouldRotateOnUpstreamErr(statusCode int, errMsg string) bool {
 		strings.Contains(lower, "forbidden") ||
 		strings.Contains(lower, "rate limit") ||
 		strings.Contains(lower, "quota") ||
+		strings.Contains(lower, "exceeded the quota") ||
+		strings.Contains(lower, "14018") ||
+		strings.Contains(lower, "额度已用尽") ||
 		strings.Contains(lower, "insufficient") ||
 		strings.Contains(lower, "concurrency") ||
 		strings.Contains(lower, "3009") {

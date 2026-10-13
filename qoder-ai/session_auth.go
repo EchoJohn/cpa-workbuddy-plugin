@@ -225,9 +225,11 @@ func pickSessionAuth(sessionKey string, candidates []activeAuthCandidate) string
 		}
 	}
 	next := ""
-	for _, id := range usable {
-		if boundCounts[id] == 0 {
-			next = id
+	for i := 0; i < len(usable); i++ {
+		candID := usable[(int(sessionRR)+i)%len(usable)]
+		if boundCounts[candID] == 0 {
+			next = candID
+			sessionRR++
 			break
 		}
 	}

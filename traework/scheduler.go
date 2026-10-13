@@ -92,6 +92,10 @@ func handleSchedulerPick(raw []byte) ([]byte, error) {
 		if isTestFailed(c.ID) || isAccountCoolingDown(c.ID) {
 			continue
 		}
+		remain, lowOrExhausted := cachedCreditsScore(c.ID)
+		if lowOrExhausted || (remain >= 0 && remain < loadedMinRoutableCredits()) {
+			continue
+		}
 		available = append(available, c)
 	}
 	if len(available) == 0 {
@@ -99,18 +103,15 @@ func handleSchedulerPick(raw []byte) ([]byte, error) {
 	}
 	wbCandidates = available
 
-	// Low-credit first: burn the soonest-to-exhaust accounts first, so the
-	// fleet's remaining balance is concentrated on fewer accounts instead of
-	// spread thin everywhere. Unknown credits (-1, no cached snapshot yet) go
-	// LAST — never let an unmeasured account jump ahead of a measured one.
-	// Candidate order is what session routing and the panel fallback use.
+	// 健康平摊轮询：废除残血优先（Low-Credit-First）反模式。
+	// 健康可用账号按高积分优先排序（未测 -1 排最后），并在同一健康阶梯内平摊负载。
 	sort.SliceStable(wbCandidates, func(i, j int) bool {
 		left, _ := cachedCreditsScore(wbCandidates[i].ID)
 		right, _ := cachedCreditsScore(wbCandidates[j].ID)
 		if (left < 0) != (right < 0) {
-			return right < 0
+			return left >= 0
 		}
-		return left < right
+		return left > right
 	})
 
 	// Build thin view for active-auth picker. Exhausted accounts are passed

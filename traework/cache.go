@@ -60,16 +60,21 @@ func isCreditsExhausted(cr *traeCredits) bool {
 	return cr == nil || cr.TotalRemain <= 0
 }
 
-// cachedCreditsScore returns (remain, exhausted). remain is -1 when unknown.
-// A cache entry whose credits were never fetched is unknown (-1), not a
-// zero-balance account — routing must not treat it as exhausted, and the
-// credit-ordering path must not dereference the nil snapshot.
+// isCreditsLowOrExhausted 判定账号是否额度耗尽或已低于安全缓冲额度红线。
+func isCreditsLowOrExhausted(cr *traeCredits) bool {
+	if cr == nil || isCreditsExhausted(cr) {
+		return true
+	}
+	return cr.TotalRemain < loadedMinRoutableCredits()
+}
+
+// cachedCreditsScore returns (remain, exhaustedOrLow). remain is -1 when unknown.
 func cachedCreditsScore(authID string) (int64, bool) {
 	cr, ok := cachedCredits(authID)
 	if !ok || cr == nil {
 		return -1, false
 	}
-	return cr.TotalRemain, isCreditsExhausted(cr)
+	return cr.TotalRemain, isCreditsLowOrExhausted(cr)
 }
 
 func stringsTrim(s string) string {

@@ -230,6 +230,7 @@ func handleAccounts() map[string]any {
 			view.Remain = cr.TotalRemain
 			view.Credits = cr
 			view.Exhausted = isCreditsExhausted(cr)
+			view.LowCredits = !view.Exhausted && cr.TotalRemain < loadedMinRoutableCredits()
 		}
 		// Failover snapshot. cool_until is Unix seconds (panel countdown ticker).
 		if count, until, ok := failoverStateSnapshot(f.ID); ok {

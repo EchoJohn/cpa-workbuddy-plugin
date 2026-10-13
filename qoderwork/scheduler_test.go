@@ -95,8 +95,9 @@ func TestSchedulerPick_PrefersLowCreditOverHighCredit(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	resp := parsePickResponse(t, raw)
-	if !resp.Handled || resp.AuthID != "qo-a" {
-		t.Fatalf("want low-credit account qo-a routed first, got %+v", resp)
+	// qo-a (remain=10 < minRoutableCredits=20) 被低额安全红线硬排除，自动切换到健康的 qo-b (500)
+	if !resp.Handled || resp.AuthID != "qo-b" {
+		t.Fatalf("want low-credit account qo-a (<20) excluded and qo-b routed, got %+v", resp)
 	}
 }
 

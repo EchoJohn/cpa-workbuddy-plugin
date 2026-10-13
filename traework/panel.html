@@ -64,6 +64,7 @@ button.danger:hover{background:var(--err);color:#fff}
 .uid{color:var(--mut);font-size:11px;font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:12px}
 .badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:99px;background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border);white-space:nowrap}
 .badge.exhausted{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
+.badge.low-credits{background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn-border)}
 .badge.test-failed{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border);font-style:italic}
 .badge.disabled{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border)}
 .badge.stat{background:var(--mut-soft);color:var(--mut);border:1px solid var(--mut-border);font-weight:500}
@@ -568,6 +569,7 @@ function card(a){
   if(a.active)badges.push(tag("active","活跃"));
   if(a.disabled)badges.push(tag("disabled","停用"));
   if(a.exhausted)badges.push(tag("exhausted","耗尽"));
+  else if(a.low_credits)badges.push(tag("low-credits","低额保护"));
   if(a.test_failed)badges.push(tag("test-failed","测试"));
   if(!badges.length)badges.push(tag("stat","正常"));
   const cool=(!a.cooling_down&&(Number(a.fail_count)||0)>0)?tag("stat","失败"+a.fail_count+"次"):"";
@@ -677,6 +679,7 @@ function updateFilterCounts(accounts){
     if(a.test_failed){ cnt.test++; }
     else if(a.disabled)cnt.disabled++;
     else if(a.exhausted)cnt.exhausted++;
+    else if(a.low_credits){} // 低额保护不计入可用
     else cnt.available++;
     if((a.failed_count||0)>0||(a.fail_count||0)>0)cnt.failed++;
   });
@@ -729,7 +732,7 @@ function renderSummary(){
   let remainAvail=0,remainUnavail=0,used=0,size=0,knownN=0,unavailN=0,exhaustedN=0;
   scoped.forEach(a=>{
     const c=creditOf(a);
-    const isUnavailable=!!a.disabled||!!a.exhausted||!!a.test_failed;
+    const isUnavailable=!!a.disabled||!!a.exhausted||!!a.low_credits||!!a.test_failed;
     if(c.known){
       if(isUnavailable){remainUnavail+=c.remain;unavailN++;}
       else{remainAvail+=c.remain;used+=c.used;size+=c.size;knownN++;}
